@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Raagnaai Ads — Content Engine</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+body { margin: 0; background: #f4efe4; }
+textarea, input { font-family: "Spline Sans", system-ui, sans-serif; }
+::placeholder { color: #6b6457; opacity: .7; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ====== YOUR LIVE BACKEND (already filled in) ======
+const DEFAULT_BACKEND = "https://raagnaai-backend.onrender.com";
+
+// ---------- palette / type ----------
+const C = {
+  paper: "#f4efe4", panel: "#fbf8f1", ink: "#221f1a", sub: "#6b6457",
+  line: "#ddd4c2", vermilion: "#cf4a26", vermDk: "#9c3417", teal: "#1d6e56",
+  amber: "#b6770f", purple: "#534ab7", green: "#3b6d11", chip: "#efe8d8",
+};
+const FONT_DISPLAY = '"Bricolage Grotesque", Georgia, serif';
+const FONT_BODY = '"Spline Sans", system-ui, sans-serif';
+const FONT_MONO = '"JetBrains Mono", ui-monospace, monospace';
+
+// ---------- inline icons (replaces lucide) ----------
+function Ico({ n, size = 16, style, className }) {
+  const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style, className };
+  switch (n) {
+    case "plus": return <svg {...p}><path d="M12 5v14M5 12h14" /></svg>;
+    case "image": return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" /><path d="M21 15l-5-5L5 21" /></svg>;
+    case "check": return <svg {...p}><path d="M20 6L9 17l-5-5" /></svg>;
+    case "rotate-ccw": return <svg {...p}><path d="M3 3v6h6" /><path d="M3.5 9a9 9 0 1 0 2.5-4.5L3 9" /></svg>;
+    case "settings": return <svg {...p}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></svg>;
+    case "x": return <svg {...p}><path d="M18 6L6 18M6 6l12 12" /></svg>;
+    case "loader": return <svg {...p}><path d="M12 2a10 10 0 0 1 10 10" /></svg>;
+    case "mic": return <svg {...p}><rect x="9" y="2" width="6" height="11" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3" /></svg>;
+    case "film": return <svg {...p}><rect x="2" y="3" width="20" height="18" rx="2" /><path d="M7 3v18M17 3v18M2 8h5M2 16h5M17 8h5M17 16h5" /></svg>;
+    case "send": return <svg {...p}><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>;
+    case "file-text": return <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 13h6M9 17h6" /></svg>;
+    case "arrow-left": return <svg {...p}><path d="M19 12H5M12 19l-7-7 7-7" /></svg>;
+    case "sparkles": return <svg {...p}><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" /></svg>;
+    case "alert-triangle": return <svg {...p}><path d="M10.3 3.5L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.5a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>;
+    case "trash": return <svg {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>;
+    default: return <svg {...p}><circle cx="12" cy="12" r="9" /></svg>;
+  }
+}
+const mk = (name) => (props) => <Ico n={name} {...props} />;
+const Plus = mk("plus"), ImageIcon = mk("image"), Check = mk("check"), RotateCcw = mk("rotate-ccw"),
+  Settings = mk("settings"), X = mk("x"), Loader2 = mk("loader"), Mic = mk("mic"), Film = mk("film"),
+  Send = mk("send"), FileText = mk("file-text"), ArrowLeft = mk("arrow-left"), Sparkles = mk("sparkles"),
+  AlertTriangle = mk("alert-triangle"), Trash2 = mk("trash");
+
+// ---------- constants ----------
+const DEFAULT_DNA =
+`Raagnaai Ads helps businesses generate local visibility, leads, and brand recall through traditional marketing — Auto Tops, Bus Branding, Wall Paintings, Hoardings, Pole Kiosks, No Parking Boards, Canter Campaigns, Printing, and other hyperlocal outdoor advertising, with end-to-end execution and reporting.
+Ideal client: businesses needing strong local market presence in specific geographies — real estate, hospitals, educational institutions, retail brands, restaurants, jewellery stores, political campaigns, and SMEs.
+Edge: unlike agencies that only book media, Raagnaai provides customized hyperlocal solutions, reliable on-ground execution, transparent photo-proof reporting, and a single point of contact across multiple activities and locations.
+Brand belief: traditional marketing still creates trust, visibility, and local market dominance when executed consistently and intelligently.`;
+
+const PLATFORMS = [
+  { id: "facebook", label: "Facebook" }, { id: "instagram", label: "Instagram" },
+  { id: "linkedin", label: "LinkedIn" }, { id: "youtube", label: "YouTube" },
+  { id: "gmb", label: "Google Business" }, { id: "blog", label: "Blog" },
+];
+const LANGS = [{ id: "te", label: "Telugu" }, { id: "hi", label: "Hindi" }, { id: "en", label: "English" }];
+const LANG_LABEL = { te: "Telugu", hi: "Hindi", en: "English" };
+
+const STATUS = {
+  script_review: { label: "Review script", color: C.amber },
+  audio_render: { label: "Rendering audio", color: C.teal },
+  audio_review: { label: "Review audio", color: C.amber },
+  video_render: { label: "Rendering video", color: C.teal },
+  video_review: { label: "Review video", color: C.amber },
+  posting: { label: "Ready to post", color: C.purple },
+  done: { label: "Posted", color: C.green },
+  error: { label: "Needs attention", color: C.vermilion },
+};
+
+// ---------- persistence (localStorage) ----------
+const store = {
+  get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// ---------- brain (always via your backend) ----------
+async function callBrain(job, settings, feedback) {
+  if (!settings.backendUrl) throw new Error("Set your Backend URL in Settings first.");
+  const r = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/brain`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dna: settings.dna, job: { input: job.input, package: job.package, feedback } }),
+  });
+  if (!r.ok) throw new Error(`Backend brain ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// ---------- audio / video / post (backend; simulate fakes them) ----------
+async function backendCall(settings, path, body) {
+  if (settings.simulate || !settings.backendUrl) {
+    await new Promise(r => setTimeout(r, 1400));
+    if (path === "generate-audio") return { audioUrl: "SIMULATED_AUDIO", seconds: body.estSeconds || 28 };
+    if (path === "render-video") return { videoUrl: "SIMULATED_VIDEO" };
+    if (path === "post") return { posted: body.channels };
+    return {};
+  }
+  const res = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Backend ${path} failed (${res.status})`);
+  return res.json();
+}
+
+// ============================================================
+function App() {
+  const [jobs, setJobs] = useState([]);
+  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "" });
+  const [view, setView] = useState("list");
+  const [activeId, setActiveId] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const j = store.get("raagnaai:jobs"); if (j) setJobs(j);
+    const s = store.get("raagnaai:settings"); if (s) setSettings(prev => ({ ...prev, ...s }));
+    setReady(true);
+  }, []);
+  useEffect(() => { if (ready) store.set("raagnaai:jobs", jobs); }, [jobs, ready]);
+  useEffect(() => { if (ready) store.set("raagnaai:settings", settings); }, [settings, ready]);
+
+  const activeJob = jobs.find(j => j.id === activeId);
+  function patchJob(id, patch) {
+    setJobs(js => js.map(j => j.id === id ? { ...j, ...(typeof patch === "function" ? patch(j) : patch) } : j));
+  }
+  function openJob(id) { setActiveId(id); setView("job"); }
+
+  return (
+    <div style={{ fontFamily: FONT_BODY, background: C.paper, color: C.ink, minHeight: "100vh" }}>
+      <header className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid ${C.line}` }}>
+        <div className="flex items-center gap-3">
+          <div style={{ width: 34, height: 34, background: C.vermilion, borderRadius: 8, display: "grid", placeItems: "center" }}>
+            <span style={{ color: "#fff", fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20, lineHeight: 1 }}>R</span>
+          </div>
+          <div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em" }}>Raagnaai Ads</div>
+            <div style={{ fontSize: 11, color: C.sub, letterSpacing: "0.08em", textTransform: "uppercase" }}>Content engine</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {settings.simulate && (
+            <span style={{ fontSize: 11, color: C.amber, background: "#f7edd6", border: `1px solid #e7d3a3`, padding: "4px 9px", borderRadius: 999, fontFamily: FONT_MONO }}>
+              simulate mode
+            </span>
+          )}
+          <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+            style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 13 }}>
+            <Settings size={15} /> Settings
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-6 py-7">
+        {view === "list" && <JobList jobs={jobs} onNew={() => setView("new")} onOpen={openJob}
+          onDelete={(id) => setJobs(js => js.filter(j => j.id !== id))} />}
+        {view === "new" && <NewJob onCancel={() => setView("list")}
+          onCreated={(job) => { setJobs(js => [job, ...js]); openJob(job.id); }} />}
+        {view === "job" && activeJob && <JobDetail job={activeJob} settings={settings}
+          patch={(p) => patchJob(activeJob.id, p)} onBack={() => setView("list")} />}
+      </main>
+
+      {showSettings && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} />}
+    </div>
+  );
+}
+
+function JobList({ jobs, onNew, onOpen, onDelete }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5">
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 27, letterSpacing: "-0.02em" }}>Your posts</h1>
+        <button onClick={onNew} className="flex items-center gap-2 px-4 py-2.5 rounded-lg"
+          style={{ background: C.vermilion, color: "#fff", fontWeight: 500, fontSize: 14 }}>
+          <Plus size={17} /> New post
+        </button>
+      </div>
+      {jobs.length === 0 ? (
+        <div className="text-center py-20 rounded-2xl" style={{ border: `1.5px dashed ${C.line}`, background: C.panel }}>
+          <Sparkles size={26} style={{ color: C.vermilion, margin: "0 auto 12px" }} />
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 18 }}>Start with a photo of an activity</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>A hoarding, a bus wrap, a wall painting — the brain writes everything from it.</div>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {jobs.map(j => {
+            const st = STATUS[j.status] || STATUS.script_review;
+            return (
+              <div key={j.id} className="flex items-center gap-4 p-4 rounded-xl cursor-pointer"
+                style={{ background: C.panel, border: `1px solid ${C.line}` }} onClick={() => onOpen(j.id)}>
+                <div style={{ width: 54, height: 54, borderRadius: 10, background: C.chip, overflow: "hidden", flexShrink: 0, display: "grid", placeItems: "center" }}>
+                  {j.input.imageDataUrl ? <img src={j.input.imageDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <ImageIcon size={20} style={{ color: C.sub }} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontWeight: 500, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {j.package?.strategy?.angle || j.input.idea || "Untitled post"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>
+                    {LANG_LABEL[j.input.language]} · {j.input.platforms.length} channels
+                  </div>
+                </div>
+                <span style={{ fontSize: 12, fontFamily: FONT_MONO, color: st.color, background: "#fff", border: `1px solid ${st.color}33`, padding: "4px 9px", borderRadius: 999 }}>
+                  {st.label}
+                </span>
+                <button onClick={(e) => { e.stopPropagation(); onDelete(j.id); }} style={{ color: C.sub, padding: 4 }}><Trash2 size={15} /></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewJob({ onCancel, onCreated }) {
+  const [idea, setIdea] = useState("");
+  const [language, setLanguage] = useState("te");
+  const [platforms, setPlatforms] = useState(["instagram", "facebook"]);
+  const [img, setImg] = useState(null);
+  const fileRef = useRef();
+  const recRef = useRef(null);
+  const [listening, setListening] = useState(false);
+  function toggleMic() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Voice typing needs Chrome, with the app opened from its web address (not a downloaded file)."); return; }
+    if (listening) { if (recRef.current) recRef.current.stop(); setListening(false); return; }
+    const rec = new SR();
+    rec.lang = { te: "te-IN", hi: "hi-IN", en: "en-IN" }[language] || "en-IN";
+    rec.interimResults = true; rec.continuous = true;
+    const base = idea ? idea.trim() + " " : "";
+    rec.onresult = (e) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setIdea(base + t); };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec; rec.start(); setListening(true);
+  }
+
+  function onFile(e) {
+    const f = e.target.files?.[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setImg({ dataUrl: r.result, base64: String(r.result).split(",")[1], mediaType: f.type });
+    r.readAsDataURL(f);
+  }
+  function toggle(p) { setPlatforms(ps => ps.includes(p) ? ps.filter(x => x !== p) : [...ps, p]); }
+  function create() {
+    if (!idea && !img) return;
+    onCreated({
+      id: "job_" + Date.now(), createdAt: Date.now(), status: "drafting",
+      input: { idea, language, platforms, imageDataUrl: img?.dataUrl, imageBase64: img?.base64, imageMediaType: img?.mediaType },
+      package: null, audio: null, video: null, posted: null, history: [],
+    });
+  }
+  const card = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14 };
+  return (
+    <div>
+      <button onClick={onCancel} className="flex items-center gap-1.5 mb-4" style={{ color: C.sub, fontSize: 13 }}><ArrowLeft size={15} /> Back</button>
+      <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 25, marginBottom: 18, letterSpacing: "-0.02em" }}>New post</h1>
+      <div className="grid gap-4">
+        <div className="p-4" style={card}>
+          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Photo of the activity</label>
+          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} hidden />
+          <div onClick={() => fileRef.current?.click()} className="mt-2 rounded-xl cursor-pointer flex items-center justify-center"
+            style={{ border: `1.5px dashed ${C.line}`, height: img ? "auto" : 130, overflow: "hidden", background: C.paper }}>
+            {img ? <img src={img.dataUrl} alt="" style={{ width: "100%", maxHeight: 280, objectFit: "contain" }} />
+              : <div className="text-center" style={{ color: C.sub }}><ImageIcon size={22} style={{ margin: "0 auto 6px" }} /><div style={{ fontSize: 13 }}>Tap to upload</div></div>}
+          </div>
+        </div>
+
+        <div className="p-4" style={card}>
+          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Idea (optional)</label>
+          <textarea value={idea} onChange={e => setIdea(e.target.value)} rows={3}
+            placeholder="e.g. festival season — push hoardings + bus branding combo for street visibility"
+            className="w-full mt-2 p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, resize: "vertical", color: C.ink }} />
+          <button onClick={toggleMic} className="flex items-center gap-1.5 mt-2 px-3 py-2 rounded-lg"
+            style={{ border: `1px solid ${listening ? C.vermilion : C.line}`, background: listening ? "#f7e4dd" : C.paper, color: listening ? C.vermDk : C.ink, fontSize: 13 }}>
+            <Mic size={15} /> {listening ? "Listening… tap to stop" : "Speak instead of typing"}
+          </button>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>Speaks in the language you pick below. (Needs the app on a web address.)</div>
+        </div>
+
+        <div className="p-4" style={card}>
+          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Language</label>
+          <div className="flex gap-2 mt-2">
+            {LANGS.map(l => (
+              <button key={l.id} onClick={() => setLanguage(l.id)} className="px-3.5 py-2 rounded-lg" style={{
+                fontSize: 13.5, fontWeight: 500,
+                background: language === l.id ? C.ink : C.paper, color: language === l.id ? C.paper : C.ink,
+                border: `1px solid ${language === l.id ? C.ink : C.line}`,
+              }}>{l.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4" style={card}>
+          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Channels</label>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {PLATFORMS.map(pl => {
+              const on = platforms.includes(pl.id);
+              return <button key={pl.id} onClick={() => toggle(pl.id)} className="px-3.5 py-2 rounded-lg" style={{
+                fontSize: 13.5, fontWeight: 500,
+                background: on ? "#f7e4dd" : C.paper, color: on ? C.vermDk : C.ink,
+                border: `1px solid ${on ? C.vermilion : C.line}`,
+              }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{pl.label}</button>;
+            })}
+          </div>
+        </div>
+
+        <button onClick={create} disabled={!idea && !img} className="flex items-center justify-center gap-2 py-3 rounded-lg"
+          style={{ background: (!idea && !img) ? C.line : C.vermilion, color: "#fff", fontWeight: 500, fontSize: 15 }}>
+          <Sparkles size={17} /> Generate with the brain
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JobDetail({ job, settings, patch, onBack }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function generateScript(feedback) {
+    setBusy(true); setErr(null);
+    try {
+      const pkg = await callBrain(job, settings, feedback);
+      patch({ package: pkg, status: "script_review", history: [...(job.history || []), feedback ? `script corrected: ${feedback}` : "script generated"] });
+    } catch (e) { setErr("Brain error: " + e.message + ". Try again."); patch({ status: "error" }); }
+    setBusy(false);
+  }
+  useEffect(() => { if (job.status === "drafting" && !busy) generateScript(); }, []);
+
+  async function runAudio(voiceHint) {
+    setBusy(true); setErr(null); patch({ status: "audio_render" });
+    try {
+      const r = await backendCall(settings, "generate-audio", {
+        voiceId: settings.voiceId, language: job.input.language,
+        text: job.package.video_script.full_voiceover_text, voiceHint: voiceHint || "",
+        estSeconds: job.package.video_script.estimated_seconds,
+      });
+      patch({ audio: { url: r.audioUrl, seconds: r.seconds }, status: "audio_review" });
+    } catch (e) { setErr(e.message); patch({ status: "error" }); }
+    setBusy(false);
+  }
+  async function runVideo(visualHint) {
+    setBusy(true); setErr(null); patch({ status: "video_render" });
+    try {
+      const r = await backendCall(settings, "render-video", {
+        audioUrl: job.audio?.url, imageBrief: job.package.image_brief,
+        imageBase64: job.input.imageBase64, visualHint: visualHint || "",
+        logoBase64: settings.logoBase64, logoMediaType: settings.logoMediaType,
+        voiceId: settings.voiceId, language: job.input.language,
+      });
+      patch({ video: { url: r.videoUrl, imageUrl: r.imageUrl }, status: "video_review" });
+    } catch (e) { setErr(e.message); patch({ status: "error" }); }
+    setBusy(false);
+  }
+  async function doPost() {
+    setBusy(true); setErr(null); patch({ status: "posting" });
+    try {
+      const r = await backendCall(settings, "post", { channels: job.input.platforms, package: job.package, videoUrl: job.video?.url, imageUrl: job.video?.imageUrl });
+      patch({ posted: r.posted, status: "done" });
+    } catch (e) { setErr(e.message); patch({ status: "error" }); }
+    setBusy(false);
+  }
+
+  const st = STATUS[job.status] || {};
+  return (
+    <div>
+      <button onClick={onBack} className="flex items-center gap-1.5 mb-4" style={{ color: C.sub, fontSize: 13 }}><ArrowLeft size={15} /> All posts</button>
+      <div className="flex items-center gap-3 mb-5">
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 23, letterSpacing: "-0.02em" }}>
+          {job.package?.activity_seen || job.input.idea || "Post"}
+        </h1>
+        {st.label && <span style={{ fontSize: 12, fontFamily: FONT_MONO, color: st.color, background: "#fff", border: `1px solid ${st.color}33`, padding: "4px 9px", borderRadius: 999 }}>{st.label}</span>}
+      </div>
+
+      {err && <Banner tone="error" text={err} />}
+      {busy && <Banner tone="busy" text={
+        job.status === "audio_render" ? "Rendering the voiceover…" :
+        job.status === "video_render" ? "Rendering the video (this can take a minute)…" :
+        job.status === "posting" ? "Posting to your channels…" : "The brain is working…"} />}
+
+      {job.package && <ScriptGate job={job} busy={busy}
+        onEdit={(pkg) => patch({ package: pkg })}
+        onApprove={() => runAudio()}
+        onCorrect={(note) => generateScript(note)} />}
+
+      {["audio_review", "video_render", "video_review", "posting", "done"].includes(job.status) && job.audio &&
+        <AudioGate job={job} busy={busy}
+          onApprove={() => runVideo()}
+          onFixVoice={(note) => runAudio(note)}
+          onFixWording={(note) => generateScript(note)} />}
+
+      {["video_review", "posting", "done"].includes(job.status) && job.video &&
+        <VideoGate job={job} busy={busy}
+          onApprove={doPost}
+          onFixVisual={(note) => runVideo(note)}
+          onFixScript={(note) => generateScript(note)} />}
+
+      {job.status === "done" && <PostedCard job={job} />}
+    </div>
+  );
+}
+
+function Banner({ tone, text }) {
+  const map = { error: [C.vermilion, "#f7e4dd", "alert-triangle"], busy: [C.teal, "#dff0e9", "loader"] };
+  const [col, bg, icon] = map[tone];
+  return <div className="flex items-center gap-2 px-4 py-3 rounded-lg mb-4" style={{ background: bg, border: `1px solid ${col}44`, color: col, fontSize: 14 }}>
+    <Ico n={icon} size={16} className={tone === "busy" ? "animate-spin" : ""} /> {text}
+  </div>;
+}
+
+function GateShell({ icon, title, children, done }) {
+  return <section className="rounded-2xl mb-4 overflow-hidden" style={{ border: `1px solid ${C.line}`, background: C.panel }}>
+    <div className="flex items-center gap-2.5 px-5 py-3.5" style={{ borderBottom: `1px solid ${C.line}`, background: done ? "#eef4e6" : C.panel }}>
+      <Ico n={icon} size={17} style={{ color: done ? C.green : C.vermilion }} />
+      <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>{title}</span>
+      {done && <Check size={16} style={{ color: C.green, marginLeft: "auto" }} />}
+    </div>
+    <div className="p-5">{children}</div>
+  </section>;
+}
+
+function Field({ label, value, onChange, rows = 2 }) {
+  return <div className="mb-3">
+    <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{label}</div>
+    <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={rows}
+      className="w-full p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, lineHeight: 1.55, resize: "vertical", color: C.ink }} />
+  </div>;
+}
+
+function CorrectBox({ buttons }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  if (!open) return <button onClick={() => setOpen(true)} className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg"
+    style={{ border: `1px solid ${C.line}`, background: C.paper, fontSize: 14, fontWeight: 500 }}><RotateCcw size={15} /> Ask for a correction</button>;
+  return <div className="rounded-lg p-3" style={{ border: `1px solid ${C.line}`, background: C.paper }}>
+    <textarea autoFocus value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="What should change?"
+      className="w-full p-2.5 rounded-md mb-2.5" style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 14, color: C.ink }} />
+    <div className="flex flex-wrap gap-2">
+      {buttons.map(b => <button key={b.label} disabled={!note} onClick={() => { b.action(note); setOpen(false); setNote(""); }}
+        className="px-3.5 py-2 rounded-md" style={{ background: note ? b.color : C.line, color: "#fff", fontSize: 13.5, fontWeight: 500 }}>{b.label}</button>)}
+      <button onClick={() => setOpen(false)} className="px-3 py-2" style={{ color: C.sub, fontSize: 13.5 }}>Cancel</button>
+    </div>
+  </div>;
+}
+
+function ScriptGate({ job, busy, onEdit, onApprove, onCorrect }) {
+  const p = job.package;
+  const done = job.status !== "script_review" && job.status !== "error";
+  function setPath(path, val) {
+    const next = structuredClone(p); let o = next;
+    for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
+    o[path[path.length - 1]] = val; onEdit(next);
+  }
+  return <GateShell icon="file-text" title="1 · Review the script & posts" done={done}>
+    <div className="mb-4 p-3 rounded-lg" style={{ background: "#f7efe0", border: `1px solid ${C.line}` }}>
+      <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>Strategy · one CTA</div>
+      <div style={{ fontSize: 14, marginTop: 4 }}>{p.strategy?.angle}</div>
+      <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>Emotion: {p.strategy?.target_emotion} · CTA: {p.strategy?.cta}</div>
+    </div>
+
+    {p._meta && <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 11.5, color: C.sub, fontFamily: FONT_MONO }}>
+        brain: {(p._meta.models || []).join(" + ")}{p._meta.synthesizedBy ? ` → final by ${p._meta.synthesizedBy}` : ""}
+      </div>
+      {p._meta.drafts && <details style={{ marginTop: 6 }}>
+        <summary style={{ fontSize: 12, color: C.sub, cursor: "pointer" }}>see the {Object.keys(p._meta.drafts).length} model drafts</summary>
+        <pre style={{ fontSize: 11, fontFamily: FONT_MONO, overflow: "auto", maxHeight: 240, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, marginTop: 6 }}>{JSON.stringify(p._meta.drafts, null, 2)}</pre>
+      </details>}
+    </div>}
+
+    <Field label="Voiceover (goes to ElevenLabs)" rows={3} value={p.video_script?.full_voiceover_text} onChange={v => setPath(["video_script", "full_voiceover_text"], v)} />
+    {job.input.platforms.includes("instagram") && <Field label="Instagram caption" value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} />}
+    {job.input.platforms.includes("facebook") && <Field label="Facebook caption" value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} />}
+    {job.input.platforms.includes("linkedin") && <Field label="LinkedIn caption" value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} />}
+    {job.input.platforms.includes("youtube") && <Field label="YouTube title" value={p.youtube?.title} onChange={v => setPath(["youtube", "title"], v)} />}
+    {job.input.platforms.includes("gmb") && <Field label="Google Business post" value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} />}
+    {job.input.platforms.includes("blog") && <Field label="Blog draft (HTML)" rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} />}
+    <Field label="Image brief (single image / poster)" value={`${p.image_brief?.concept || ""}${p.image_brief?.on_screen_text ? " — on-screen: " + p.image_brief.on_screen_text : ""}`} onChange={v => setPath(["image_brief", "concept"], v)} />
+
+    {!done && <div className="flex flex-wrap items-center gap-3 mt-2">
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
+        style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
+      <CorrectBox buttons={[{ label: "Rewrite", color: C.vermilion, action: onCorrect }]} />
+    </div>}
+  </GateShell>;
+}
+
+function AudioGate({ job, busy, onApprove, onFixVoice, onFixWording }) {
+  const done = ["video_render", "video_review", "posting", "done"].includes(job.status);
+  const sim = job.audio?.url === "SIMULATED_AUDIO";
+  return <GateShell icon="mic" title="2 · Review the audio" done={done}>
+    <div className="p-3 rounded-lg mb-3" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+      {sim ? <div style={{ fontSize: 13.5, color: C.sub }}><Mic size={15} style={{ display: "inline", marginRight: 6 }} />Simulated audio (turn Simulate off + add your voice ID to hear the real ElevenLabs render). ~{job.audio?.seconds}s.</div>
+        : <audio controls src={job.audio?.url} style={{ width: "100%" }} />}
+    </div>
+    {!done && <div className="flex flex-wrap items-center gap-3">
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
+        style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make video</button>
+      <CorrectBox buttons={[
+        { label: "Fix voice/pace (re-render only)", color: C.amber, action: onFixVoice },
+        { label: "Fix the words (back to brain)", color: C.purple, action: onFixWording },
+      ]} />
+    </div>}
+  </GateShell>;
+}
+
+function VideoGate({ job, busy, onApprove, onFixVisual, onFixScript }) {
+  const done = job.status === "done";
+  const sim = job.video?.url === "SIMULATED_VIDEO";
+  return <GateShell icon="film" title="3 · Review the video" done={done}>
+    <div className="p-3 rounded-lg mb-3 flex items-center justify-center" style={{ background: C.paper, border: `1px solid ${C.line}`, minHeight: 90 }}>
+      {sim ? <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center" }}><Film size={20} style={{ margin: "0 auto 6px" }} />Simulated video. With Simulate off, the JSON2Video render (matched to your audio length) plays here.</div>
+        : <video controls src={job.video?.url} style={{ width: "100%", borderRadius: 8 }} />}
+    </div>
+    {!done && <div className="flex flex-wrap items-center gap-3">
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
+        style={{ background: C.purple, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Send size={16} /> Approve → post</button>
+      <CorrectBox buttons={[
+        { label: "Fix the visual (re-render)", color: C.amber, action: onFixVisual },
+        { label: "Fix the script (back to brain)", color: C.purple, action: onFixScript },
+      ]} />
+    </div>}
+  </GateShell>;
+}
+
+function PostedCard({ job }) {
+  return <div className="rounded-2xl p-5" style={{ background: "#eef4e6", border: `1px solid ${C.green}44` }}>
+    <div className="flex items-center gap-2" style={{ color: C.green }}>
+      <Check size={18} /><span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>Posted</span>
+    </div>
+    <div style={{ fontSize: 14, color: C.ink, marginTop: 6 }}>Sent to: {(job.posted || job.input.platforms).join(", ")}.</div>
+  </div>;
+}
+
+function SettingsModal({ settings, setSettings, onClose }) {
+  const [s, setS] = useState(settings);
+  function save() { setSettings(s); onClose(); }
+  const lbl = { fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
+  const inp = { background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, width: "100%", color: C.ink };
+  return <div className="fixed inset-0 flex items-start justify-center p-4 overflow-auto" style={{ background: "rgba(34,31,26,.45)", zIndex: 50 }}>
+    <div className="w-full max-w-lg rounded-2xl mt-10" style={{ background: C.panel, border: `1px solid ${C.line}` }}>
+      <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${C.line}` }}>
+        <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>Settings</span>
+        <button onClick={onClose} style={{ color: C.sub }}><X size={19} /></button>
+      </div>
+      <div className="p-5 grid gap-4">
+        <label className="flex items-center justify-between p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          <div><div style={{ fontWeight: 500, fontSize: 14 }}>Simulate mode</div>
+            <div style={{ fontSize: 12.5, color: C.sub }}>Fakes audio/video so you can walk the full flow. Turn off for real renders.</div></div>
+          <input type="checkbox" checked={s.simulate} onChange={e => setS({ ...s, simulate: e.target.checked })} style={{ width: 18, height: 18 }} />
+        </label>
+        <div><label style={lbl}>Backend URL</label>
+          <input style={inp} value={s.backendUrl} onChange={e => setS({ ...s, backendUrl: e.target.value })} /></div>
+        <div><label style={lbl}>ElevenLabs cloned voice ID</label>
+          <input style={inp} placeholder="paste your voice ID" value={s.voiceId} onChange={e => setS({ ...s, voiceId: e.target.value })} /></div>
+        <div><label style={lbl}>End-card logo (PNG works best)</label>
+          <input type="file" accept="image/*" style={{ fontSize: 13 }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const cv = document.createElement("canvas"); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext("2d").drawImage(im, 0, 0); const png = cv.toDataURL("image/png"); setS(prev => ({ ...prev, logoDataUrl: png, logoBase64: png.split(",")[1], logoMediaType: "image/png" })); }; im.src = rd.result; }; rd.readAsDataURL(f); }} />
+          {s.logoDataUrl && <img src={s.logoDataUrl} alt="" style={{ maxHeight: 70, marginTop: 8, background: "#eee", padding: 6, borderRadius: 8 }} />}</div>
+        <div><label style={lbl}>Business DNA (the brain's ground truth)</label>
+          <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={7} value={s.dna} onChange={e => setS({ ...s, dna: e.target.value })} /></div>
+        <button onClick={save} className="py-2.5 rounded-lg" style={{ background: C.vermilion, color: "#fff", fontWeight: 500, fontSize: 14.5 }}>Save</button>
+      </div>
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
