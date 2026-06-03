@@ -120,7 +120,11 @@ async function backendCall(settings, path, body) {
   const res = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/${path}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Backend ${path} failed (${res.status})`);
+  if (!res.ok) {
+    let detail = "";
+    try { const j = await res.json(); detail = j.error || ""; } catch (_) {}
+    throw new Error(`Backend ${path} failed (${res.status})${detail ? ": " + detail : ""}`);
+  }
   return res.json();
 }
 
