@@ -104,6 +104,11 @@ async function callBrain(job, settings, feedback) {
   return r.json();
 }
 
+// measure an audio file's length (seconds) so photos can be timed to the voiceover
+function audioDuration(url) {
+  return new Promise(res => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(a.duration || 0); a.onerror = () => res(0); a.src = url; });
+}
+
 // ---------- audio / video / post (backend; simulate fakes them) ----------
 async function backendCall(settings, path, body) {
   if (settings.simulate || !settings.backendUrl) {
@@ -234,7 +239,7 @@ function NewJob({ onCancel, onCreated }) {
   const [idea, setIdea] = useState("");
   const [language, setLanguage] = useState("te");
   const [platforms, setPlatforms] = useState(["instagram", "facebook"]);
-  const [img, setImg] = useState(null);
+  const [imgs, setImgs] = useState([]);
   const fileRef = useRef();
   const recRef = useRef(null);
   const [listening, setListening] = useState(false);
@@ -253,17 +258,21 @@ function NewJob({ onCancel, onCreated }) {
   }
 
   function onFile(e) {
-    const f = e.target.files?.[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = () => setImg({ dataUrl: r.result, base64: String(r.result).split(",")[1], mediaType: f.type });
-    r.readAsDataURL(f);
+    const files = Array.from(e.target.files || []);
+    files.forEach(f => {
+      const r = new FileReader();
+      r.onload = () => setImgs(prev => [...prev, { dataUrl: r.result, base64: String(r.result).split(",")[1], mediaType: f.type }]);
+      r.readAsDataURL(f);
+    });
+    e.target.value = "";
   }
   function toggle(p) { setPlatforms(ps => ps.includes(p) ? ps.filter(x => x !== p) : [...ps, p]); }
   function create() {
-    if (!idea && !img) return;
+    if (!idea && imgs.length === 0) return;
+    const first = imgs[0] || {};
     onCreated({
       id: "job_" + Date.now(), createdAt: Date.now(), status: "drafting",
-      input: { idea, language, platforms, imageDataUrl: img?.dataUrl, imageBase64: img?.base64, imageMediaType: img?.mediaType },
+      input: { idea, language, platforms, images: imgs, imageDataUrl: first.dataUrl, imageBase64: first.base64, imageMediaType: first.mediaType },
       package: null, audio: null, video: null, posted: null, history: [],
     });
   }
@@ -274,13 +283,21 @@ function NewJob({ onCancel, onCreated }) {
       <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 25, marginBottom: 18, letterSpacing: "-0.02em" }}>New post</h1>
       <div className="grid gap-4">
         <div className="p-4" style={card}>
-          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Photo of the activity</label>
-          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} hidden />
-          <div onClick={() => fileRef.current?.click()} className="mt-2 rounded-xl cursor-pointer flex items-center justify-center"
-            style={{ border: `1.5px dashed ${C.line}`, height: img ? "auto" : 130, overflow: "hidden", background: C.paper }}>
-            {img ? <img src={img.dataUrl} alt="" style={{ width: "100%", maxHeight: 280, objectFit: "contain" }} />
-              : <div className="text-center" style={{ color: C.sub }}><ImageIcon size={22} style={{ margin: "0 auto 6px" }} /><div style={{ fontSize: 13 }}>Tap to upload</div></div>}
+          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Photos of the activity (add a few for a richer video)</label>
+          <input ref={fileRef} type="file" accept="image/*" multiple onChange={onFile} hidden />
+          <div className="flex flex-wrap gap-2 mt-2">
+            {imgs.map((im, i) => (
+              <div key={i} style={{ position: "relative", width: 88, height: 88, borderRadius: 10, overflow: "hidden", border: `1px solid ${C.line}` }}>
+                <img src={im.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <button onClick={() => setImgs(prev => prev.filter((_, j) => j !== i))} style={{ position: "absolute", top: 2, right: 2, background: "rgba(34,31,26,.65)", color: "#fff", borderRadius: 999, width: 20, height: 20, fontSize: 13, lineHeight: "20px" }}>×</button>
+                {i === 0 && <span style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(34,31,26,.6)", color: "#fff", fontSize: 9.5, textAlign: "center" }}>main</span>}
+              </div>
+            ))}
+            <button onClick={() => fileRef.current?.click()} style={{ width: 88, height: 88, borderRadius: 10, border: `1.5px dashed ${C.line}`, background: C.paper, color: C.sub, display: "grid", placeItems: "center" }}>
+              <div style={{ textAlign: "center" }}><ImageIcon size={20} /><div style={{ fontSize: 11, marginTop: 2 }}>Add</div></div>
+            </button>
           </div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>The first photo ("main") is what the brain reads to write the post.</div>
         </div>
 
         <div className="p-4" style={card}>
@@ -360,9 +377,14 @@ function JobDetail({ job, settings, patch, onBack }) {
   async function runVideo(visualHint) {
     setBusy(true); setErr(null); patch({ status: "video_render" });
     try {
+      let audioSeconds = job.package?.video_script?.estimated_seconds || 0;
+      if (job.audio?.url && job.audio.url !== "SIMULATED_AUDIO") {
+        try { audioSeconds = (await audioDuration(job.audio.url)) || audioSeconds; } catch (_) {}
+      }
       const r = await backendCall(settings, "render-video", {
         audioUrl: job.audio?.url, imageBrief: job.package.image_brief,
-        imageBase64: job.input.imageBase64, visualHint: visualHint || "",
+        imageBase64: job.input.imageBase64, imageMediaType: job.input.imageMediaType, visualHint: visualHint || "",
+        images: (job.input.images || []).map(im => ({ base64: im.base64, mediaType: im.mediaType })), audioSeconds,
         logoBase64: settings.logoBase64, logoMediaType: settings.logoMediaType,
         voiceId: settings.voiceId, language: job.input.language,
       });
