@@ -20,10 +20,8 @@ textarea, input { font-family: "Spline Sans", system-ui, sans-serif; }
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
-// ====== YOUR LIVE BACKEND (already filled in) ======
 const DEFAULT_BACKEND = "https://raagnaai-backend.onrender.com";
 
-// ---------- palette / type ----------
 const C = {
   paper: "#f4efe4", panel: "#fbf8f1", ink: "#221f1a", sub: "#6b6457",
   line: "#ddd4c2", vermilion: "#cf4a26", vermDk: "#9c3417", teal: "#1d6e56",
@@ -33,7 +31,6 @@ const FONT_DISPLAY = '"Bricolage Grotesque", Georgia, serif';
 const FONT_BODY = '"Spline Sans", system-ui, sans-serif';
 const FONT_MONO = '"JetBrains Mono", ui-monospace, monospace';
 
-// ---------- inline icons (replaces lucide) ----------
 function Ico({ n, size = 16, style, className }) {
   const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style, className };
   switch (n) {
@@ -52,6 +49,7 @@ function Ico({ n, size = 16, style, className }) {
     case "sparkles": return <svg {...p}><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z" /></svg>;
     case "alert-triangle": return <svg {...p}><path d="M10.3 3.5L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.5a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>;
     case "trash": return <svg {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>;
+    case "globe": return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" /></svg>;
     default: return <svg {...p}><circle cx="12" cy="12" r="9" /></svg>;
   }
 }
@@ -59,9 +57,8 @@ const mk = (name) => (props) => <Ico n={name} {...props} />;
 const Plus = mk("plus"), ImageIcon = mk("image"), Check = mk("check"), RotateCcw = mk("rotate-ccw"),
   Settings = mk("settings"), X = mk("x"), Loader2 = mk("loader"), Mic = mk("mic"), Film = mk("film"),
   Send = mk("send"), FileText = mk("file-text"), ArrowLeft = mk("arrow-left"), Sparkles = mk("sparkles"),
-  AlertTriangle = mk("alert-triangle"), Trash2 = mk("trash");
+  AlertTriangle = mk("alert-triangle"), Trash2 = mk("trash"), Globe = mk("globe");
 
-// ---------- constants ----------
 const DEFAULT_DNA =
 `Raagnaai Ads helps businesses generate local visibility, leads, and brand recall through traditional marketing — Auto Tops, Bus Branding, Wall Paintings, Hoardings, Pole Kiosks, No Parking Boards, Canter Campaigns, Printing, and other hyperlocal outdoor advertising, with end-to-end execution and reporting.
 Ideal client: businesses needing strong local market presence in specific geographies — real estate, hospitals, educational institutions, retail brands, restaurants, jewellery stores, political campaigns, and SMEs.
@@ -76,24 +73,33 @@ const PLATFORMS = [
 const LANGS = [{ id: "te", label: "Telugu" }, { id: "hi", label: "Hindi" }, { id: "en", label: "English" }];
 const LANG_LABEL = { te: "Telugu", hi: "Hindi", en: "English" };
 
+// per-platform language rule (which video language + which text language)
+const POLICY = {
+  facebook: { video: "te", text: "te" }, instagram: { video: "te", text: "te" },
+  youtube: { video: "te", text: "en" }, linkedin: { video: "en", text: "en" },
+  gmb: { video: "te", text: "te" }, blog: { video: "en", text: "en" },
+};
+const videoLangsOf = (plats) => [...new Set((plats || []).map(p => (POLICY[p] || {}).video).filter(Boolean))];
+
 const STATUS = {
   script_review: { label: "Review script", color: C.amber },
-  audio_render: { label: "Rendering audio", color: C.teal },
+  audio_render: { label: "Making audio", color: C.teal },
   audio_review: { label: "Review audio", color: C.amber },
-  video_render: { label: "Rendering video", color: C.teal },
+  video_render: { label: "Making video", color: C.teal },
   video_review: { label: "Review video", color: C.amber },
-  posting: { label: "Ready to post", color: C.purple },
+  posting: { label: "Posting", color: C.purple },
   done: { label: "Posted", color: C.green },
   error: { label: "Needs attention", color: C.vermilion },
 };
 
-// ---------- persistence (localStorage) ----------
 const store = {
   get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
+function audioDuration(url) {
+  return new Promise(res => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(a.duration || 0); a.onerror = () => res(0); a.src = url; });
+}
 
-// ---------- brain (always via your backend) ----------
 async function callBrain(job, settings, feedback) {
   if (!settings.backendUrl) throw new Error("Set your Backend URL in Settings first.");
   const r = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/brain`, {
@@ -103,19 +109,12 @@ async function callBrain(job, settings, feedback) {
   if (!r.ok) throw new Error(`Backend brain ${r.status}: ${await r.text()}`);
   return r.json();
 }
-
-// measure an audio file's length (seconds) so photos can be timed to the voiceover
-function audioDuration(url) {
-  return new Promise(res => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(a.duration || 0); a.onerror = () => res(0); a.src = url; });
-}
-
-// ---------- audio / video / post (backend; simulate fakes them) ----------
 async function backendCall(settings, path, body) {
   if (settings.simulate || !settings.backendUrl) {
-    await new Promise(r => setTimeout(r, 1400));
+    await new Promise(r => setTimeout(r, 1200));
     if (path === "generate-audio") return { audioUrl: "SIMULATED_AUDIO", seconds: body.estSeconds || 28 };
     if (path === "render-video") return { videoUrl: "SIMULATED_VIDEO" };
-    if (path === "post") return { posted: body.channels };
+    if (path === "post") return { posted: (body.items || []).map(i => i.channel) };
     return {};
   }
   const res = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/${path}`, {
@@ -143,9 +142,7 @@ function App() {
   useEffect(() => { if (ready) store.set("raagnaai:settings", settings); }, [settings, ready]);
 
   const activeJob = jobs.find(j => j.id === activeId);
-  function patchJob(id, patch) {
-    setJobs(js => js.map(j => j.id === id ? { ...j, ...(typeof patch === "function" ? patch(j) : patch) } : j));
-  }
+  function patchJob(id, patch) { setJobs(js => js.map(j => j.id === id ? { ...j, ...(typeof patch === "function" ? patch(j) : patch) } : j)); }
   function openJob(id) { setActiveId(id); setView("job"); }
 
   return (
@@ -161,25 +158,15 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {settings.simulate && (
-            <span style={{ fontSize: 11, color: C.amber, background: "#f7edd6", border: `1px solid #e7d3a3`, padding: "4px 9px", borderRadius: 999, fontFamily: FONT_MONO }}>
-              simulate mode
-            </span>
-          )}
-          <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-            style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 13 }}>
-            <Settings size={15} /> Settings
-          </button>
+          {settings.simulate && <span style={{ fontSize: 11, color: C.amber, background: "#f7edd6", border: `1px solid #e7d3a3`, padding: "4px 9px", borderRadius: 999, fontFamily: FONT_MONO }}>simulate mode</span>}
+          <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 13 }}><Settings size={15} /> Settings</button>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-7">
-        {view === "list" && <JobList jobs={jobs} onNew={() => setView("new")} onOpen={openJob}
-          onDelete={(id) => setJobs(js => js.filter(j => j.id !== id))} />}
-        {view === "new" && <NewJob onCancel={() => setView("list")}
-          onCreated={(job) => { setJobs(js => [job, ...js]); openJob(job.id); }} />}
-        {view === "job" && activeJob && <JobDetail job={activeJob} settings={settings}
-          patch={(p) => patchJob(activeJob.id, p)} onBack={() => setView("list")} />}
+        {view === "list" && <JobList jobs={jobs} onNew={() => setView("new")} onOpen={openJob} onDelete={(id) => setJobs(js => js.filter(j => j.id !== id))} />}
+        {view === "new" && <NewJob onCancel={() => setView("list")} onCreated={(job) => { setJobs(js => [job, ...js]); openJob(job.id); }} />}
+        {view === "job" && activeJob && <JobDetail job={activeJob} settings={settings} patch={(p) => patchJob(activeJob.id, p)} onBack={() => setView("list")} />}
       </main>
 
       {showSettings && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} />}
@@ -192,39 +179,28 @@ function JobList({ jobs, onNew, onOpen, onDelete }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 27, letterSpacing: "-0.02em" }}>Your posts</h1>
-        <button onClick={onNew} className="flex items-center gap-2 px-4 py-2.5 rounded-lg"
-          style={{ background: C.vermilion, color: "#fff", fontWeight: 500, fontSize: 14 }}>
-          <Plus size={17} /> New post
-        </button>
+        <button onClick={onNew} className="flex items-center gap-2 px-4 py-2.5 rounded-lg" style={{ background: C.vermilion, color: "#fff", fontWeight: 500, fontSize: 14 }}><Plus size={17} /> New post</button>
       </div>
       {jobs.length === 0 ? (
         <div className="text-center py-20 rounded-2xl" style={{ border: `1.5px dashed ${C.line}`, background: C.panel }}>
           <Sparkles size={26} style={{ color: C.vermilion, margin: "0 auto 12px" }} />
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 18 }}>Start with a photo of an activity</div>
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>A hoarding, a bus wrap, a wall painting — the brain writes everything from it.</div>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 18 }}>Start with photos of an activity</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>A hoarding, a bus wrap, a wall painting — the brain writes everything from them.</div>
         </div>
       ) : (
         <div className="grid gap-3">
           {jobs.map(j => {
             const st = STATUS[j.status] || STATUS.script_review;
             return (
-              <div key={j.id} className="flex items-center gap-4 p-4 rounded-xl cursor-pointer"
-                style={{ background: C.panel, border: `1px solid ${C.line}` }} onClick={() => onOpen(j.id)}>
+              <div key={j.id} className="flex items-center gap-4 p-4 rounded-xl cursor-pointer" style={{ background: C.panel, border: `1px solid ${C.line}` }} onClick={() => onOpen(j.id)}>
                 <div style={{ width: 54, height: 54, borderRadius: 10, background: C.chip, overflow: "hidden", flexShrink: 0, display: "grid", placeItems: "center" }}>
-                  {j.input.imageDataUrl ? <img src={j.input.imageDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <ImageIcon size={20} style={{ color: C.sub }} />}
+                  {j.input.imageDataUrl ? <img src={j.input.imageDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ImageIcon size={20} style={{ color: C.sub }} />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div style={{ fontWeight: 500, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {j.package?.strategy?.angle || j.input.idea || "Untitled post"}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>
-                    {LANG_LABEL[j.input.language]} · {j.input.platforms.length} channels
-                  </div>
+                  <div style={{ fontWeight: 500, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.package?.strategy?.angle || j.input.idea || "Untitled post"}</div>
+                  <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{j.input.platforms.length} channels · videos: {((j.input.videoLangs && j.input.videoLangs.length) ? j.input.videoLangs : videoLangsOf(j.input.platforms)).map(l => LANG_LABEL[l]).join(" + ") || "—"}</div>
                 </div>
-                <span style={{ fontSize: 12, fontFamily: FONT_MONO, color: st.color, background: "#fff", border: `1px solid ${st.color}33`, padding: "4px 9px", borderRadius: 999 }}>
-                  {st.label}
-                </span>
+                <span style={{ fontSize: 12, fontFamily: FONT_MONO, color: st.color, background: "#fff", border: `1px solid ${st.color}33`, padding: "4px 9px", borderRadius: 999 }}>{st.label}</span>
                 <button onClick={(e) => { e.stopPropagation(); onDelete(j.id); }} style={{ color: C.sub, padding: 4 }}><Trash2 size={15} /></button>
               </div>
             );
@@ -237,15 +213,17 @@ function JobList({ jobs, onNew, onOpen, onDelete }) {
 
 function NewJob({ onCancel, onCreated }) {
   const [idea, setIdea] = useState("");
-  const [language, setLanguage] = useState("te");
+  const [language, setLanguage] = useState("te"); // voice-typing language (transcription only)
   const [platforms, setPlatforms] = useState(["instagram", "facebook"]);
+  const [langs, setLangs] = useState(["te"]); // video languages to actually generate (cost control)
   const [imgs, setImgs] = useState([]);
   const fileRef = useRef();
   const recRef = useRef(null);
   const [listening, setListening] = useState(false);
+
   function toggleMic() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert("Voice typing needs Chrome, with the app opened from its web address (not a downloaded file)."); return; }
+    if (!SR) { alert("Voice typing needs Chrome on a web address (not a downloaded file)."); return; }
     if (listening) { if (recRef.current) recRef.current.stop(); setListening(false); return; }
     const rec = new SR();
     rec.lang = { te: "te-IN", hi: "hi-IN", en: "en-IN" }[language] || "en-IN";
@@ -256,34 +234,36 @@ function NewJob({ onCancel, onCreated }) {
     rec.onerror = () => setListening(false);
     recRef.current = rec; rec.start(); setListening(true);
   }
-
   function onFile(e) {
     const files = Array.from(e.target.files || []);
-    files.forEach(f => {
-      const r = new FileReader();
-      r.onload = () => setImgs(prev => [...prev, { dataUrl: r.result, base64: String(r.result).split(",")[1], mediaType: f.type }]);
-      r.readAsDataURL(f);
-    });
+    files.forEach(f => { const r = new FileReader(); r.onload = () => setImgs(prev => [...prev, { dataUrl: r.result, base64: String(r.result).split(",")[1], mediaType: f.type }]); r.readAsDataURL(f); });
     e.target.value = "";
   }
-  function toggle(p) { setPlatforms(ps => ps.includes(p) ? ps.filter(x => x !== p) : [...ps, p]); }
+  function toggle(p) {
+    const adding = !platforms.includes(p);
+    setPlatforms(ps => ps.includes(p) ? ps.filter(x => x !== p) : [...ps, p]);
+    if (adding) { const vl = POLICY[p].video; setLangs(ls => ls.includes(vl) ? ls : [...ls, vl]); }
+  }
+  function toggleLang(l) { setLangs(ls => ls.includes(l) ? (ls.length > 1 ? ls.filter(x => x !== l) : ls) : [...ls, l]); }
   function create() {
     if (!idea && imgs.length === 0) return;
     const first = imgs[0] || {};
     onCreated({
       id: "job_" + Date.now(), createdAt: Date.now(), status: "drafting",
-      input: { idea, language, platforms, images: imgs, imageDataUrl: first.dataUrl, imageBase64: first.base64, imageMediaType: first.mediaType },
-      package: null, audio: null, video: null, posted: null, history: [],
+      input: { idea, language, platforms, videoLangs: langs.length ? langs : ["te"], images: imgs, imageDataUrl: first.dataUrl, imageBase64: first.base64, imageMediaType: first.mediaType },
+      package: null, audio: {}, video: {}, posted: null, history: [],
     });
   }
   const card = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14 };
+  const lbl = { fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" };
+  const vlangs = videoLangsOf(platforms);
   return (
     <div>
       <button onClick={onCancel} className="flex items-center gap-1.5 mb-4" style={{ color: C.sub, fontSize: 13 }}><ArrowLeft size={15} /> Back</button>
       <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 25, marginBottom: 18, letterSpacing: "-0.02em" }}>New post</h1>
       <div className="grid gap-4">
         <div className="p-4" style={card}>
-          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Photos of the activity (add a few for a richer video)</label>
+          <label style={lbl}>Photos of the activity (add a few for a richer video)</label>
           <input ref={fileRef} type="file" accept="image/*" multiple onChange={onFile} hidden />
           <div className="flex flex-wrap gap-2 mt-2">
             {imgs.map((im, i) => (
@@ -301,48 +281,35 @@ function NewJob({ onCancel, onCreated }) {
         </div>
 
         <div className="p-4" style={card}>
-          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Idea (optional)</label>
-          <textarea value={idea} onChange={e => setIdea(e.target.value)} rows={3}
-            placeholder="e.g. festival season — push hoardings + bus branding combo for street visibility"
-            className="w-full mt-2 p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, resize: "vertical", color: C.ink }} />
-          <button onClick={toggleMic} className="flex items-center gap-1.5 mt-2 px-3 py-2 rounded-lg"
-            style={{ border: `1px solid ${listening ? C.vermilion : C.line}`, background: listening ? "#f7e4dd" : C.paper, color: listening ? C.vermDk : C.ink, fontSize: 13 }}>
-            <Mic size={15} /> {listening ? "Listening… tap to stop" : "Speak instead of typing"}
-          </button>
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>Speaks in the language you pick below. (Needs the app on a web address.)</div>
-        </div>
-
-        <div className="p-4" style={card}>
-          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Language</label>
-          <div className="flex gap-2 mt-2">
-            {LANGS.map(l => (
-              <button key={l.id} onClick={() => setLanguage(l.id)} className="px-3.5 py-2 rounded-lg" style={{
-                fontSize: 13.5, fontWeight: 500,
-                background: language === l.id ? C.ink : C.paper, color: language === l.id ? C.paper : C.ink,
-                border: `1px solid ${language === l.id ? C.ink : C.line}`,
-              }}>{l.label}</button>
-            ))}
+          <label style={lbl}>Idea (optional)</label>
+          <textarea value={idea} onChange={e => setIdea(e.target.value)} rows={3} placeholder="e.g. festival season — push hoardings + bus branding combo for street visibility" className="w-full mt-2 p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, resize: "vertical", color: C.ink }} />
+          <button onClick={toggleMic} className="flex items-center gap-1.5 mt-2 px-3 py-2 rounded-lg" style={{ border: `1px solid ${listening ? C.vermilion : C.line}`, background: listening ? "#f7e4dd" : C.paper, color: listening ? C.vermDk : C.ink, fontSize: 13 }}><Mic size={15} /> {listening ? "Listening… tap to stop" : "Speak instead of typing"}</button>
+          <div className="flex items-center gap-2 mt-2">
+            <span style={{ fontSize: 11.5, color: C.sub }}>I'll speak in:</span>
+            {LANGS.map(l => <button key={l.id} onClick={() => setLanguage(l.id)} className="px-2.5 py-1 rounded-md" style={{ fontSize: 12, fontWeight: 500, background: language === l.id ? C.ink : C.paper, color: language === l.id ? C.paper : C.ink, border: `1px solid ${language === l.id ? C.ink : C.line}` }}>{l.label}</button>)}
           </div>
         </div>
 
         <div className="p-4" style={card}>
-          <label style={{ fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" }}>Channels</label>
+          <label style={lbl}>Channels</label>
           <div className="flex flex-wrap gap-2 mt-2">
             {PLATFORMS.map(pl => {
               const on = platforms.includes(pl.id);
-              return <button key={pl.id} onClick={() => toggle(pl.id)} className="px-3.5 py-2 rounded-lg" style={{
-                fontSize: 13.5, fontWeight: 500,
-                background: on ? "#f7e4dd" : C.paper, color: on ? C.vermDk : C.ink,
-                border: `1px solid ${on ? C.vermilion : C.line}`,
-              }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{pl.label}</button>;
+              return <button key={pl.id} onClick={() => toggle(pl.id)} className="px-3.5 py-2 rounded-lg" style={{ fontSize: 13.5, fontWeight: 500, background: on ? "#f7e4dd" : C.paper, color: on ? C.vermDk : C.ink, border: `1px solid ${on ? C.vermilion : C.line}` }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{pl.label}</button>;
             })}
           </div>
+          {platforms.length > 0 && <div className="flex items-center gap-1.5 mt-3" style={{ fontSize: 12, color: C.sub }}><Globe size={13} /> Suggested for these channels: {vlangs.map(l => LANG_LABEL[l]).join(" + ")}. You choose what to actually make below.</div>}
         </div>
 
-        <button onClick={create} disabled={!idea && !img} className="flex items-center justify-center gap-2 py-3 rounded-lg"
-          style={{ background: (!idea && !img) ? C.line : C.vermilion, color: "#fff", fontWeight: 500, fontSize: 15 }}>
-          <Sparkles size={17} /> Generate with the brain
-        </button>
+        <div className="p-4" style={card}>
+          <label style={lbl}>Make videos in (each language = one more video to generate)</label>
+          <div className="flex gap-2 mt-2">
+            {LANGS.map(l => { const on = langs.includes(l.id); return <button key={l.id} onClick={() => toggleLang(l.id)} className="px-3.5 py-2 rounded-lg" style={{ fontSize: 13.5, fontWeight: 500, background: on ? C.ink : C.paper, color: on ? C.paper : C.ink, border: `1px solid ${on ? C.ink : C.line}` }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{l.label}</button>; })}
+          </div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>Only ticked languages cost a render. Telugu only? Untick English — no English video is made. Captions still come in each platform's own language.</div>
+        </div>
+
+        <button onClick={create} disabled={!idea && imgs.length === 0} className="flex items-center justify-center gap-2 py-3 rounded-lg" style={{ background: (!idea && imgs.length === 0) ? C.line : C.vermilion, color: "#fff", fontWeight: 500, fontSize: 15 }}><Sparkles size={17} /> Generate with the brain</button>
       </div>
     </div>
   );
@@ -351,52 +318,70 @@ function NewJob({ onCancel, onCreated }) {
 function JobDetail({ job, settings, patch, onBack }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const vlangs = (job.input.videoLangs && job.input.videoLangs.length) ? job.input.videoLangs : videoLangsOf(job.input.platforms);
 
   async function generateScript(feedback) {
     setBusy(true); setErr(null);
     try {
       const pkg = await callBrain(job, settings, feedback);
-      patch({ package: pkg, status: "script_review", history: [...(job.history || []), feedback ? `script corrected: ${feedback}` : "script generated"] });
-    } catch (e) { setErr("Brain error: " + e.message + ". Try again."); patch({ status: "error" }); }
+      patch({ package: pkg, status: "script_review" });
+    } catch (e) { setErr("Brain error: " + e.message); patch({ status: "error" }); }
     setBusy(false);
   }
   useEffect(() => { if (job.status === "drafting" && !busy) generateScript(); }, []);
 
-  async function runAudio(voiceHint) {
+  async function runAudios() {
     setBusy(true); setErr(null); patch({ status: "audio_render" });
     try {
-      const r = await backendCall(settings, "generate-audio", {
-        voiceId: settings.voiceId, language: job.input.language,
-        text: job.package.video_script.full_voiceover_text, voiceHint: voiceHint || "",
-        estSeconds: job.package.video_script.estimated_seconds,
-      });
-      patch({ audio: { url: r.audioUrl, seconds: r.seconds }, status: "audio_review" });
+      const audio = {};
+      for (const L of vlangs) {
+        const sc = job.package.scripts?.[L] || {};
+        const r = await backendCall(settings, "generate-audio", { voiceId: settings.voiceId, language: L, text: sc.full_voiceover_text || "", estSeconds: sc.estimated_seconds });
+        audio[L] = { url: r.audioUrl, seconds: r.seconds };
+      }
+      patch({ audio, status: "audio_review" });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
     setBusy(false);
   }
-  async function runVideo(visualHint) {
+  async function runVideos() {
     setBusy(true); setErr(null); patch({ status: "video_render" });
     try {
-      let audioSeconds = job.package?.video_script?.estimated_seconds || 0;
-      if (job.audio?.url && job.audio.url !== "SIMULATED_AUDIO") {
-        try { audioSeconds = (await audioDuration(job.audio.url)) || audioSeconds; } catch (_) {}
+      const video = {};
+      for (const L of vlangs) {
+        const sc = job.package.scripts?.[L] || {};
+        let audioSeconds = sc.estimated_seconds || 0;
+        const aurl = job.audio?.[L]?.url;
+        if (aurl && aurl !== "SIMULATED_AUDIO") { try { audioSeconds = (await audioDuration(aurl)) || audioSeconds; } catch (_) {} }
+        const r = await backendCall(settings, "render-video", {
+          audioUrl: aurl, imageBrief: { on_screen_text: sc.on_screen_text || "" },
+          imageBase64: job.input.imageBase64, imageMediaType: job.input.imageMediaType,
+          images: (job.input.images || []).map(im => ({ base64: im.base64, mediaType: im.mediaType })), audioSeconds,
+          logoBase64: settings.logoBase64, logoMediaType: settings.logoMediaType,
+          voiceId: settings.voiceId, language: L,
+        });
+        video[L] = { url: r.videoUrl, imageUrl: r.imageUrl };
       }
-      const r = await backendCall(settings, "render-video", {
-        audioUrl: job.audio?.url, imageBrief: job.package.image_brief,
-        imageBase64: job.input.imageBase64, imageMediaType: job.input.imageMediaType, visualHint: visualHint || "",
-        images: (job.input.images || []).map(im => ({ base64: im.base64, mediaType: im.mediaType })), audioSeconds,
-        logoBase64: settings.logoBase64, logoMediaType: settings.logoMediaType,
-        voiceId: settings.voiceId, language: job.input.language,
-      });
-      patch({ video: { url: r.videoUrl, imageUrl: r.imageUrl }, status: "video_review" });
+      patch({ video, status: "video_review" });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
     setBusy(false);
   }
   async function doPost() {
     setBusy(true); setErr(null); patch({ status: "posting" });
     try {
-      const r = await backendCall(settings, "post", { channels: job.input.platforms, package: job.package, videoUrl: job.video?.url, imageUrl: job.video?.imageUrl });
-      patch({ posted: r.posted, status: "done" });
+      const p = job.package;
+      const items = job.input.platforms.map(ch => {
+        const vlang = vlangs.includes(POLICY[ch].video) ? POLICY[ch].video : vlangs[0];
+        const item = { channel: ch, videoUrl: job.video?.[vlang]?.url };
+        if (ch === "facebook") item.text = p.captions?.facebook?.text;
+        else if (ch === "instagram") item.text = p.captions?.instagram?.text;
+        else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
+        else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; }
+        else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
+        else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; }
+        return item;
+      });
+      await backendCall(settings, "post", { items });
+      patch({ posted: job.input.platforms, status: "done" });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
     setBusy(false);
   }
@@ -406,35 +391,21 @@ function JobDetail({ job, settings, patch, onBack }) {
     <div>
       <button onClick={onBack} className="flex items-center gap-1.5 mb-4" style={{ color: C.sub, fontSize: 13 }}><ArrowLeft size={15} /> All posts</button>
       <div className="flex items-center gap-3 mb-5">
-        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 23, letterSpacing: "-0.02em" }}>
-          {job.package?.activity_seen || job.input.idea || "Post"}
-        </h1>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 23, letterSpacing: "-0.02em" }}>{job.package?.strategy?.angle || job.input.idea || "Post"}</h1>
         {st.label && <span style={{ fontSize: 12, fontFamily: FONT_MONO, color: st.color, background: "#fff", border: `1px solid ${st.color}33`, padding: "4px 9px", borderRadius: 999 }}>{st.label}</span>}
       </div>
 
       {err && <Banner tone="error" text={err} />}
       {busy && <Banner tone="busy" text={
-        job.status === "audio_render" ? "Rendering the voiceover…" :
-        job.status === "video_render" ? "Rendering the video (this can take a minute)…" :
+        job.status === "audio_render" ? "Making the voiceovers…" :
+        job.status === "video_render" ? "Rendering the videos (this can take a few minutes)…" :
         job.status === "posting" ? "Posting to your channels…" : "The brain is working…"} />}
 
-      {job.package && <ScriptGate job={job} busy={busy}
-        onEdit={(pkg) => patch({ package: pkg })}
-        onApprove={() => runAudio()}
-        onCorrect={(note) => generateScript(note)} />}
-
-      {["audio_review", "video_render", "video_review", "posting", "done"].includes(job.status) && job.audio &&
-        <AudioGate job={job} busy={busy}
-          onApprove={() => runVideo()}
-          onFixVoice={(note) => runAudio(note)}
-          onFixWording={(note) => generateScript(note)} />}
-
-      {["video_review", "posting", "done"].includes(job.status) && job.video &&
-        <VideoGate job={job} busy={busy}
-          onApprove={doPost}
-          onFixVisual={(note) => runVideo(note)}
-          onFixScript={(note) => generateScript(note)} />}
-
+      {job.package && <ScriptGate job={job} vlangs={vlangs} busy={busy} onEdit={(pkg) => patch({ package: pkg })} onApprove={runAudios} onCorrect={generateScript} />}
+      {["audio_review", "video_render", "video_review", "posting", "done"].includes(job.status) && job.audio && Object.keys(job.audio).length > 0 &&
+        <AudioGate job={job} vlangs={vlangs} busy={busy} onApprove={runVideos} onFixVoice={runAudios} onFixWording={generateScript} />}
+      {["video_review", "posting", "done"].includes(job.status) && job.video && Object.keys(job.video).length > 0 &&
+        <VideoGate job={job} vlangs={vlangs} busy={busy} onApprove={doPost} onFixVisual={runVideos} onFixScript={generateScript} />}
       {job.status === "done" && <PostedCard job={job} />}
     </div>
   );
@@ -443,11 +414,8 @@ function JobDetail({ job, settings, patch, onBack }) {
 function Banner({ tone, text }) {
   const map = { error: [C.vermilion, "#f7e4dd", "alert-triangle"], busy: [C.teal, "#dff0e9", "loader"] };
   const [col, bg, icon] = map[tone];
-  return <div className="flex items-center gap-2 px-4 py-3 rounded-lg mb-4" style={{ background: bg, border: `1px solid ${col}44`, color: col, fontSize: 14 }}>
-    <Ico n={icon} size={16} className={tone === "busy" ? "animate-spin" : ""} /> {text}
-  </div>;
+  return <div className="flex items-center gap-2 px-4 py-3 rounded-lg mb-4" style={{ background: bg, border: `1px solid ${col}44`, color: col, fontSize: 14 }}><Ico n={icon} size={16} className={tone === "busy" ? "animate-spin" : ""} /> {text}</div>;
 }
-
 function GateShell({ icon, title, children, done }) {
   return <section className="rounded-2xl mb-4 overflow-hidden" style={{ border: `1px solid ${C.line}`, background: C.panel }}>
     <div className="flex items-center gap-2.5 px-5 py-3.5" style={{ borderBottom: `1px solid ${C.line}`, background: done ? "#eef4e6" : C.panel }}>
@@ -458,116 +426,101 @@ function GateShell({ icon, title, children, done }) {
     <div className="p-5">{children}</div>
   </section>;
 }
-
 function Field({ label, value, onChange, rows = 2 }) {
   return <div className="mb-3">
     <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{label}</div>
-    <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={rows}
-      className="w-full p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, lineHeight: 1.55, resize: "vertical", color: C.ink }} />
+    <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={rows} className="w-full p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, lineHeight: 1.55, resize: "vertical", color: C.ink }} />
   </div>;
 }
-
 function CorrectBox({ buttons }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
-  if (!open) return <button onClick={() => setOpen(true)} className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg"
-    style={{ border: `1px solid ${C.line}`, background: C.paper, fontSize: 14, fontWeight: 500 }}><RotateCcw size={15} /> Ask for a correction</button>;
+  if (!open) return <button onClick={() => setOpen(true)} className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg" style={{ border: `1px solid ${C.line}`, background: C.paper, fontSize: 14, fontWeight: 500 }}><RotateCcw size={15} /> Ask for a correction</button>;
   return <div className="rounded-lg p-3" style={{ border: `1px solid ${C.line}`, background: C.paper }}>
-    <textarea autoFocus value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="What should change?"
-      className="w-full p-2.5 rounded-md mb-2.5" style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 14, color: C.ink }} />
+    <textarea autoFocus value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="What should change?" className="w-full p-2.5 rounded-md mb-2.5" style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 14, color: C.ink }} />
     <div className="flex flex-wrap gap-2">
-      {buttons.map(b => <button key={b.label} disabled={!note} onClick={() => { b.action(note); setOpen(false); setNote(""); }}
-        className="px-3.5 py-2 rounded-md" style={{ background: note ? b.color : C.line, color: "#fff", fontSize: 13.5, fontWeight: 500 }}>{b.label}</button>)}
+      {buttons.map(b => <button key={b.label} disabled={!note} onClick={() => { b.action(note); setOpen(false); setNote(""); }} className="px-3.5 py-2 rounded-md" style={{ background: note ? b.color : C.line, color: "#fff", fontSize: 13.5, fontWeight: 500 }}>{b.label}</button>)}
       <button onClick={() => setOpen(false)} className="px-3 py-2" style={{ color: C.sub, fontSize: 13.5 }}>Cancel</button>
     </div>
   </div>;
 }
 
-function ScriptGate({ job, busy, onEdit, onApprove, onCorrect }) {
+function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
   const p = job.package;
   const done = job.status !== "script_review" && job.status !== "error";
-  function setPath(path, val) {
-    const next = structuredClone(p); let o = next;
-    for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
-    o[path[path.length - 1]] = val; onEdit(next);
-  }
-  return <GateShell icon="file-text" title="1 · Review the script & posts" done={done}>
+  function setPath(path, val) { const next = JSON.parse(JSON.stringify(p)); let o = next; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; } o[path[path.length - 1]] = val; onEdit(next); }
+  const has = (id) => job.input.platforms.includes(id);
+  return <GateShell icon="file-text" title="1 · Review the scripts & posts" done={done}>
     <div className="mb-4 p-3 rounded-lg" style={{ background: "#f7efe0", border: `1px solid ${C.line}` }}>
       <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>Strategy · one CTA</div>
       <div style={{ fontSize: 14, marginTop: 4 }}>{p.strategy?.angle}</div>
       <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>Emotion: {p.strategy?.target_emotion} · CTA: {p.strategy?.cta}</div>
     </div>
-
     {p._meta && <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 11.5, color: C.sub, fontFamily: FONT_MONO }}>
-        brain: {(p._meta.models || []).join(" + ")}{p._meta.synthesizedBy ? ` → final by ${p._meta.synthesizedBy}` : ""}
-      </div>
-      {p._meta.drafts && <details style={{ marginTop: 6 }}>
-        <summary style={{ fontSize: 12, color: C.sub, cursor: "pointer" }}>see the {Object.keys(p._meta.drafts).length} model drafts</summary>
-        <pre style={{ fontSize: 11, fontFamily: FONT_MONO, overflow: "auto", maxHeight: 240, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, marginTop: 6 }}>{JSON.stringify(p._meta.drafts, null, 2)}</pre>
-      </details>}
+      <div style={{ fontSize: 11.5, color: C.sub, fontFamily: FONT_MONO }}>brain: {(p._meta.models || []).join(" + ")}{p._meta.synthesizedBy ? ` → final by ${p._meta.synthesizedBy}` : ""}</div>
+      {p._meta.drafts && <details style={{ marginTop: 6 }}><summary style={{ fontSize: 12, color: C.sub, cursor: "pointer" }}>see the {Object.keys(p._meta.drafts).length} model drafts</summary><pre style={{ fontSize: 11, fontFamily: FONT_MONO, overflow: "auto", maxHeight: 240, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, marginTop: 6 }}>{JSON.stringify(p._meta.drafts, null, 2)}</pre></details>}
     </div>}
 
-    <Field label="Voiceover (goes to ElevenLabs)" rows={3} value={p.video_script?.full_voiceover_text} onChange={v => setPath(["video_script", "full_voiceover_text"], v)} />
-    {job.input.platforms.includes("instagram") && <Field label="Instagram caption" value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} />}
-    {job.input.platforms.includes("facebook") && <Field label="Facebook caption" value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} />}
-    {job.input.platforms.includes("linkedin") && <Field label="LinkedIn caption" value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} />}
-    {job.input.platforms.includes("youtube") && <Field label="YouTube title" value={p.youtube?.title} onChange={v => setPath(["youtube", "title"], v)} />}
-    {job.input.platforms.includes("gmb") && <Field label="Google Business post" value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} />}
-    {job.input.platforms.includes("blog") && <Field label="Blog draft (HTML)" rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} />}
-    <Field label="Image brief (single image / poster)" value={`${p.image_brief?.concept || ""}${p.image_brief?.on_screen_text ? " — on-screen: " + p.image_brief.on_screen_text : ""}`} onChange={v => setPath(["image_brief", "concept"], v)} />
+    {vlangs.map(L => <Field key={L} label={`${LANG_LABEL[L]} voiceover (for the ${LANG_LABEL[L]} video)`} rows={3} value={p.scripts?.[L]?.full_voiceover_text} onChange={v => setPath(["scripts", L, "full_voiceover_text"], v)} />)}
+
+    <div style={{ height: 1, background: C.line, margin: "8px 0 14px" }} />
+    {has("instagram") && <Field label="Instagram caption (Telugu)" value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} />}
+    {has("facebook") && <Field label="Facebook caption (Telugu)" value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} />}
+    {has("linkedin") && <Field label="LinkedIn post (English)" value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} />}
+    {has("youtube") && <Field label="YouTube title (Telugu video) + English description" rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} />}
+    {has("gmb") && <Field label="Google Business post (Telugu)" value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} />}
+    {has("blog") && <Field label="Blog (English, HTML)" rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} />}
 
     {!done && <div className="flex flex-wrap items-center gap-3 mt-2">
-      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
-        style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
       <CorrectBox buttons={[{ label: "Rewrite", color: C.vermilion, action: onCorrect }]} />
     </div>}
   </GateShell>;
 }
 
-function AudioGate({ job, busy, onApprove, onFixVoice, onFixWording }) {
+function AudioGate({ job, vlangs, busy, onApprove, onFixVoice, onFixWording }) {
   const done = ["video_render", "video_review", "posting", "done"].includes(job.status);
-  const sim = job.audio?.url === "SIMULATED_AUDIO";
   return <GateShell icon="mic" title="2 · Review the audio" done={done}>
-    <div className="p-3 rounded-lg mb-3" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-      {sim ? <div style={{ fontSize: 13.5, color: C.sub }}><Mic size={15} style={{ display: "inline", marginRight: 6 }} />Simulated audio (turn Simulate off + add your voice ID to hear the real ElevenLabs render). ~{job.audio?.seconds}s.</div>
-        : <audio controls src={job.audio?.url} style={{ width: "100%" }} />}
-    </div>
-    {!done && <div className="flex flex-wrap items-center gap-3">
-      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
-        style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make video</button>
-      <CorrectBox buttons={[
-        { label: "Fix voice/pace (re-render only)", color: C.amber, action: onFixVoice },
-        { label: "Fix the words (back to brain)", color: C.purple, action: onFixWording },
-      ]} />
+    {vlangs.map(L => {
+      const a = job.audio?.[L];
+      const sim = a?.url === "SIMULATED_AUDIO";
+      return <div key={L} className="mb-3">
+        <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{LANG_LABEL[L]} voiceover</div>
+        <div className="p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
+          {sim ? <div style={{ fontSize: 13.5, color: C.sub }}><Mic size={15} style={{ display: "inline", marginRight: 6 }} />Simulated (turn Simulate off + add your voice ID for the real render).</div> : <audio controls src={a?.url} style={{ width: "100%" }} />}
+        </div>
+      </div>;
+    })}
+    {!done && <div className="flex flex-wrap items-center gap-3 mt-1">
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make videos</button>
+      <CorrectBox buttons={[{ label: "Fix voice/pace (re-make audio)", color: C.amber, action: onFixVoice }, { label: "Fix the words (back to brain)", color: C.purple, action: onFixWording }]} />
     </div>}
   </GateShell>;
 }
 
-function VideoGate({ job, busy, onApprove, onFixVisual, onFixScript }) {
+function VideoGate({ job, vlangs, busy, onApprove, onFixVisual, onFixScript }) {
   const done = job.status === "done";
-  const sim = job.video?.url === "SIMULATED_VIDEO";
-  return <GateShell icon="film" title="3 · Review the video" done={done}>
-    <div className="p-3 rounded-lg mb-3 flex items-center justify-center" style={{ background: C.paper, border: `1px solid ${C.line}`, minHeight: 90 }}>
-      {sim ? <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center" }}><Film size={20} style={{ margin: "0 auto 6px" }} />Simulated video. With Simulate off, the JSON2Video render (matched to your audio length) plays here.</div>
-        : <video controls src={job.video?.url} style={{ width: "100%", borderRadius: 8 }} />}
-    </div>
-    {!done && <div className="flex flex-wrap items-center gap-3">
-      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg"
-        style={{ background: C.purple, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Send size={16} /> Approve → post</button>
-      <CorrectBox buttons={[
-        { label: "Fix the visual (re-render)", color: C.amber, action: onFixVisual },
-        { label: "Fix the script (back to brain)", color: C.purple, action: onFixScript },
-      ]} />
+  return <GateShell icon="film" title="3 · Review the videos" done={done}>
+    {vlangs.map(L => {
+      const v = job.video?.[L];
+      const sim = v?.url === "SIMULATED_VIDEO";
+      return <div key={L} className="mb-3">
+        <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{LANG_LABEL[L]} video</div>
+        <div className="p-3 rounded-lg flex items-center justify-center" style={{ background: C.paper, border: `1px solid ${C.line}`, minHeight: 80 }}>
+          {sim ? <div style={{ fontSize: 13.5, color: C.sub, textAlign: "center" }}><Film size={20} style={{ margin: "0 auto 6px" }} />Simulated video. With Simulate off, the real render plays here.</div> : <video controls src={v?.url} style={{ width: "100%", maxHeight: 420, borderRadius: 8 }} />}
+        </div>
+      </div>;
+    })}
+    {!done && <div className="flex flex-wrap items-center gap-3 mt-1">
+      <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.purple, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Send size={16} /> Approve → post</button>
+      <CorrectBox buttons={[{ label: "Fix the visuals (re-render)", color: C.amber, action: onFixVisual }, { label: "Fix the script (back to brain)", color: C.purple, action: onFixScript }]} />
     </div>}
   </GateShell>;
 }
 
 function PostedCard({ job }) {
   return <div className="rounded-2xl p-5" style={{ background: "#eef4e6", border: `1px solid ${C.green}44` }}>
-    <div className="flex items-center gap-2" style={{ color: C.green }}>
-      <Check size={18} /><span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>Posted</span>
-    </div>
+    <div className="flex items-center gap-2" style={{ color: C.green }}><Check size={18} /><span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>Posted</span></div>
     <div style={{ fontSize: 14, color: C.ink, marginTop: 6 }}>Sent to: {(job.posted || job.input.platforms).join(", ")}.</div>
   </div>;
 }
@@ -585,19 +538,15 @@ function SettingsModal({ settings, setSettings, onClose }) {
       </div>
       <div className="p-5 grid gap-4">
         <label className="flex items-center justify-between p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-          <div><div style={{ fontWeight: 500, fontSize: 14 }}>Simulate mode</div>
-            <div style={{ fontSize: 12.5, color: C.sub }}>Fakes audio/video so you can walk the full flow. Turn off for real renders.</div></div>
+          <div><div style={{ fontWeight: 500, fontSize: 14 }}>Simulate mode</div><div style={{ fontSize: 12.5, color: C.sub }}>Fakes audio/video so you can walk the flow. Turn off for real renders.</div></div>
           <input type="checkbox" checked={s.simulate} onChange={e => setS({ ...s, simulate: e.target.checked })} style={{ width: 18, height: 18 }} />
         </label>
-        <div><label style={lbl}>Backend URL</label>
-          <input style={inp} value={s.backendUrl} onChange={e => setS({ ...s, backendUrl: e.target.value })} /></div>
-        <div><label style={lbl}>ElevenLabs cloned voice ID</label>
-          <input style={inp} placeholder="paste your voice ID" value={s.voiceId} onChange={e => setS({ ...s, voiceId: e.target.value })} /></div>
+        <div><label style={lbl}>Backend URL</label><input style={inp} value={s.backendUrl} onChange={e => setS({ ...s, backendUrl: e.target.value })} /></div>
+        <div><label style={lbl}>ElevenLabs cloned voice ID</label><input style={inp} placeholder="paste your voice ID" value={s.voiceId} onChange={e => setS({ ...s, voiceId: e.target.value })} /></div>
         <div><label style={lbl}>End-card logo (PNG works best)</label>
           <input type="file" accept="image/*" style={{ fontSize: 13 }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const cv = document.createElement("canvas"); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext("2d").drawImage(im, 0, 0); const png = cv.toDataURL("image/png"); setS(prev => ({ ...prev, logoDataUrl: png, logoBase64: png.split(",")[1], logoMediaType: "image/png" })); }; im.src = rd.result; }; rd.readAsDataURL(f); }} />
           {s.logoDataUrl && <img src={s.logoDataUrl} alt="" style={{ maxHeight: 70, marginTop: 8, background: "#eee", padding: 6, borderRadius: 8 }} />}</div>
-        <div><label style={lbl}>Business DNA (the brain's ground truth)</label>
-          <textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={7} value={s.dna} onChange={e => setS({ ...s, dna: e.target.value })} /></div>
+        <div><label style={lbl}>Business DNA (the brain's ground truth)</label><textarea style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} rows={7} value={s.dna} onChange={e => setS({ ...s, dna: e.target.value })} /></div>
         <button onClick={save} className="py-2.5 rounded-lg" style={{ background: C.vermilion, color: "#fff", fontWeight: 500, fontSize: 14.5 }}>Save</button>
       </div>
     </div>
