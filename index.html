@@ -375,7 +375,7 @@ function JobDetail({ job, settings, patch, onBack }) {
       const p = job.package;
       const items = job.input.platforms.map(ch => {
         const vlang = vlangs.includes(POLICY[ch].video) ? POLICY[ch].video : vlangs[0];
-        const item = { channel: ch, videoUrl: job.video?.[vlang]?.url };
+        const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
         if (ch === "facebook") item.text = p.captions?.facebook?.text;
         else if (ch === "instagram") item.text = p.captions?.instagram?.text;
         else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
