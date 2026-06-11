@@ -114,7 +114,7 @@ async function backendCall(settings, path, body) {
   if (settings.simulate || !settings.backendUrl) {
     await new Promise(r => setTimeout(r, 1200));
     if (path === "generate-audio") return { audioUrl: "SIMULATED_AUDIO", seconds: body.estSeconds || 28 };
-    if (path === "render-video") return { videoUrl: "SIMULATED_VIDEO" };
+    if (path === "render-video") return { videoUrl: "SIMULATED_VIDEO", imageUrl: "SIMULATED_IMAGE" };
     if (path === "post") return { posted: (body.items || []).map(i => i.channel) };
     return {};
   }
@@ -220,7 +220,7 @@ function NewJob({ onCancel, onCreated }) {
   const [idea, setIdea] = useState("");
   const [language, setLanguage] = useState("te"); // voice-typing language (transcription only)
   const [platforms, setPlatforms] = useState(["instagram", "facebook"]);
-  const [langs, setLangs] = useState(["te"]); // video languages to actually generate (cost control)
+  const [chanLang, setChanLang] = useState({}); // per-channel language override; missing/undefined = Auto (use POLICY)
   const [imgs, setImgs] = useState([]);
   const fileRef = useRef();
   const recRef = useRef(null);
@@ -245,23 +245,25 @@ function NewJob({ onCancel, onCreated }) {
     e.target.value = "";
   }
   function toggle(p) {
-    const adding = !platforms.includes(p);
     setPlatforms(ps => ps.includes(p) ? ps.filter(x => x !== p) : [...ps, p]);
-    if (adding) { const vl = POLICY[p].video; setLangs(ls => ls.includes(vl) ? ls : [...ls, vl]); }
   }
-  function toggleLang(l) { setLangs(ls => ls.includes(l) ? (ls.length > 1 ? ls.filter(x => x !== l) : ls) : [...ls, l]); }
+  // language for a channel: an explicit pick, otherwise the policy default ("Auto")
+  const videoLangOf = (ch) => chanLang[ch] || (POLICY[ch] || {}).video;
+  const textLangOf = (ch) => chanLang[ch] || (POLICY[ch] || {}).text;
+  // videos to render = the distinct voiceover languages across all video channels (everything except the blog)
+  const derivedVideoLangs = () => { const s = [...new Set(platforms.filter(c => c !== "blog").map(videoLangOf).filter(Boolean))]; return s.length ? s : ["te"]; };
   function create() {
     if (!idea && imgs.length === 0) return;
     const first = imgs[0] || {};
     onCreated({
       id: "job_" + Date.now(), createdAt: Date.now(), status: "drafting",
-      input: { idea, language, platforms, videoLangs: langs.length ? langs : ["te"], images: imgs, imageDataUrl: first.dataUrl, imageBase64: first.base64, imageMediaType: first.mediaType },
+      input: { idea, language, platforms, chanLang, videoLangs: derivedVideoLangs(), images: imgs, imageDataUrl: first.dataUrl, imageBase64: first.base64, imageMediaType: first.mediaType },
       package: null, audio: {}, video: {}, posted: null, history: [],
     });
   }
   const card = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14 };
   const lbl = { fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em" };
-  const vlangs = videoLangsOf(platforms);
+  const vlangs = derivedVideoLangs();
   return (
     <div>
       <button onClick={onCancel} className="flex items-center gap-1.5 mb-4" style={{ color: C.sub, fontSize: 13 }}><ArrowLeft size={15} /> Back</button>
@@ -303,15 +305,22 @@ function NewJob({ onCancel, onCreated }) {
               return <button key={pl.id} onClick={() => toggle(pl.id)} className="px-3.5 py-2 rounded-lg" style={{ fontSize: 13.5, fontWeight: 500, background: on ? "#f7e4dd" : C.paper, color: on ? C.vermDk : C.ink, border: `1px solid ${on ? C.vermilion : C.line}` }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{pl.label}</button>;
             })}
           </div>
-          {platforms.length > 0 && <div className="flex items-center gap-1.5 mt-3" style={{ fontSize: 12, color: C.sub }}><Globe size={13} /> Suggested for these channels: {vlangs.map(l => LANG_LABEL[l]).join(" + ")}. You choose what to actually make below.</div>}
-        </div>
 
-        <div className="p-4" style={card}>
-          <label style={lbl}>Make videos in (each language = one more video to generate)</label>
-          <div className="flex gap-2 mt-2">
-            {LANGS.map(l => { const on = langs.includes(l.id); return <button key={l.id} onClick={() => toggleLang(l.id)} className="px-3.5 py-2 rounded-lg" style={{ fontSize: 13.5, fontWeight: 500, background: on ? C.ink : C.paper, color: on ? C.paper : C.ink, border: `1px solid ${on ? C.ink : C.line}` }}>{on && <Check size={13} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{l.label}</button>; })}
-          </div>
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>Only ticked languages cost a render. Telugu only? Untick English — no English video is made. Captions still come in each platform's own language.</div>
+          {platforms.length > 0 && <div className="mt-4">
+            <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Language for each channel</div>
+            <div className="grid gap-2">
+              {platforms.map(ch => {
+                const label = (PLATFORMS.find(p => p.id === ch) || {}).label || ch;
+                const opts = [{ id: undefined, label: "Auto" }, { id: "te", label: "Telugu" }, { id: "hi", label: "Hindi" }, { id: "en", label: "English" }];
+                const cur = chanLang[ch];
+                return <div key={ch} className="flex items-center gap-2 flex-wrap">
+                  <span style={{ fontSize: 13, color: C.ink, minWidth: 104 }}>{label}</span>
+                  {opts.map(o => { const sel = cur === o.id; return <button key={String(o.id)} onClick={() => setChanLang(m => ({ ...m, [ch]: o.id }))} className="px-2.5 py-1 rounded-md" style={{ fontSize: 12, fontWeight: 500, background: sel ? C.ink : C.paper, color: sel ? C.paper : C.ink, border: `1px solid ${sel ? C.ink : C.line}` }}>{o.label}</button>; })}
+                </div>;
+              })}
+            </div>
+            <div className="flex items-start gap-1.5 mt-3" style={{ fontSize: 11.5, color: C.sub }}><Globe size={13} style={{ marginTop: 2, flexShrink: 0 }} /> <span><b>Auto</b> keeps your usual setup (FB/IG Telugu, YouTube Telugu video + English text, LinkedIn/Blog English). Pick a language to override a channel for this post — it sets that channel's caption <i>and</i> its voiceover. Videos will be made in: {vlangs.map(l => LANG_LABEL[l]).join(" + ")}.</span></div>
+          </div>}
         </div>
 
         <button onClick={create} disabled={!idea && imgs.length === 0} className="flex items-center justify-center gap-2 py-3 rounded-lg" style={{ background: (!idea && imgs.length === 0) ? C.line : C.vermilion, color: "#fff", fontWeight: 500, fontSize: 15 }}><Sparkles size={17} /> Generate with the brain</button>
@@ -375,7 +384,8 @@ function JobDetail({ job, settings, patch, onBack }) {
     try {
       const p = job.package;
       const items = job.input.platforms.map(ch => {
-        const vlang = vlangs.includes(POLICY[ch].video) ? POLICY[ch].video : vlangs[0];
+        const want = (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).video;
+        const vlang = vlangs.includes(want) ? want : vlangs[0];
         const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
         if (ch === "facebook") item.text = p.captions?.facebook?.text;
         else if (ch === "instagram") item.text = p.captions?.instagram?.text;
@@ -467,6 +477,7 @@ function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
   const done = job.status !== "script_review" && job.status !== "error";
   function setPath(path, val) { const next = JSON.parse(JSON.stringify(p)); let o = next; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; } o[path[path.length - 1]] = val; onEdit(next); }
   const has = (id) => job.input.platforms.includes(id);
+  const tlang = (ch) => (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).text;
   return <GateShell icon="file-text" title="1 · Review the scripts & posts" done={done}>
     <div className="mb-4 p-3 rounded-lg" style={{ background: "#f7efe0", border: `1px solid ${C.line}` }}>
       <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>Strategy · one CTA</div>
@@ -483,12 +494,12 @@ function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
     </Collapsible>)}
 
     <div style={{ height: 1, background: C.line, margin: "10px 0 12px" }} />
-    {has("instagram") && <Collapsible label="Instagram caption (Telugu)"><Field hideLabel value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} /></Collapsible>}
-    {has("facebook") && <Collapsible label="Facebook caption (Telugu)"><Field hideLabel value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} /></Collapsible>}
-    {has("linkedin") && <Collapsible label="LinkedIn post (English)"><Field hideLabel value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} /></Collapsible>}
-    {has("youtube") && <Collapsible label="YouTube title (Telugu video) + English description"><Field hideLabel rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} /></Collapsible>}
-    {has("gmb") && <Collapsible label="Google Business post (Telugu)"><Field hideLabel value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} /></Collapsible>}
-    {has("blog") && <Collapsible label="Blog (English, HTML)"><Field hideLabel rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} /></Collapsible>}
+    {has("instagram") && <Collapsible label={`Instagram caption (${LANG_LABEL[tlang("instagram")]})`}><Field hideLabel value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} /></Collapsible>}
+    {has("facebook") && <Collapsible label={`Facebook caption (${LANG_LABEL[tlang("facebook")]})`}><Field hideLabel value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} /></Collapsible>}
+    {has("linkedin") && <Collapsible label={`LinkedIn post (${LANG_LABEL[tlang("linkedin")]})`}><Field hideLabel value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} /></Collapsible>}
+    {has("youtube") && <Collapsible label={`YouTube title + description (${LANG_LABEL[tlang("youtube")]})`}><Field hideLabel rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} /></Collapsible>}
+    {has("gmb") && <Collapsible label={`Google Business post (${LANG_LABEL[tlang("gmb")]})`}><Field hideLabel value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} /></Collapsible>}
+    {has("blog") && <Collapsible label={`Blog (${LANG_LABEL[tlang("blog")]}, HTML)`}><Field hideLabel rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} /></Collapsible>}
 
     {!done && <div className="flex flex-wrap items-center gap-3 mt-2">
       <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
@@ -517,6 +528,24 @@ function AudioGate({ job, vlangs, busy, onApprove, onFixVoice, onFixWording }) {
   </GateShell>;
 }
 
+function WhatsAppShare({ job, vlangs }) {
+  const p = job.package || {};
+  const [copied, setCopied] = useState(false);
+  // a personal/local WhatsApp share reads best in Telugu — prefer the Facebook caption, then fall back
+  const caption = p.captions?.facebook?.text || p.captions?.instagram?.text || p.gmb_post?.text || p.youtube?.title || "";
+  function copyCaption() { try { navigator.clipboard.writeText(caption); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) {} }
+  return <div className="mt-2 mb-1 rounded-lg overflow-hidden" style={{ border: `1px solid ${C.line}`, background: C.panel }}>
+    <div className="px-3.5 py-2.5" style={{ background: C.chip, fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>WhatsApp (send by hand)</div>
+    <div className="px-3.5 py-3">
+      <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Save a video and copy the caption, then post them yourself on WhatsApp status, broadcast, or groups.</div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {vlangs.map(L => { const v = job.video?.[L]; const real = v?.url && v.url !== "SIMULATED_VIDEO"; return <a key={L} href={real ? v.url : undefined} download={real ? `raagnaai_${L}.mp4` : undefined} target="_blank" rel="noopener noreferrer" onClick={e => { if (!real) e.preventDefault(); }} className="px-3.5 py-2 rounded-lg" style={{ fontSize: 13, fontWeight: 500, background: real ? C.teal : C.line, color: "#fff", display: "inline-flex", alignItems: "center", gap: 6, opacity: real ? 1 : 0.7 }}><Send size={14} /> Save {LANG_LABEL[L]} video</a>; })}
+      </div>
+      <textarea readOnly value={caption} rows={3} className="w-full p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 13.5, lineHeight: 1.5, color: C.ink, resize: "vertical" }} />
+      <button onClick={copyCaption} className="mt-2 px-3.5 py-2 rounded-lg" style={{ fontSize: 13, fontWeight: 500, border: `1px solid ${C.line}`, background: C.paper, color: C.ink }}>{copied ? "Copied ✓" : "Copy caption"}</button>
+    </div>
+  </div>;
+}
 function VideoGate({ job, vlangs, busy, onApprove, onFixVisual, onFixScript }) {
   const done = job.status === "done";
   return <GateShell icon="film" title="3 · Review the videos" done={done}>
@@ -530,6 +559,7 @@ function VideoGate({ job, vlangs, busy, onApprove, onFixVisual, onFixScript }) {
         </div>
       </div>;
     })}
+    <WhatsAppShare job={job} vlangs={vlangs} />
     {!done && <div className="flex flex-wrap items-center gap-3 mt-1">
       <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.purple, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Send size={16} /> Approve → post</button>
       <CorrectBox buttons={[{ label: "Fix the visuals (re-render)", color: C.amber, action: onFixVisual }, { label: "Fix the script (back to brain)", color: C.purple, action: onFixScript }]} />
