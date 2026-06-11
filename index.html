@@ -50,6 +50,7 @@ function Ico({ n, size = 16, style, className }) {
     case "alert-triangle": return <svg {...p}><path d="M10.3 3.5L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.5a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>;
     case "trash": return <svg {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>;
     case "globe": return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" /></svg>;
+    case "chevron-down": return <svg {...p}><path d="M6 9l6 6 6-6" /></svg>;
     default: return <svg {...p}><circle cx="12" cy="12" r="9" /></svg>;
   }
 }
@@ -57,7 +58,7 @@ const mk = (name) => (props) => <Ico n={name} {...props} />;
 const Plus = mk("plus"), ImageIcon = mk("image"), Check = mk("check"), RotateCcw = mk("rotate-ccw"),
   Settings = mk("settings"), X = mk("x"), Loader2 = mk("loader"), Mic = mk("mic"), Film = mk("film"),
   Send = mk("send"), FileText = mk("file-text"), ArrowLeft = mk("arrow-left"), Sparkles = mk("sparkles"),
-  AlertTriangle = mk("alert-triangle"), Trash2 = mk("trash"), Globe = mk("globe");
+  AlertTriangle = mk("alert-triangle"), Trash2 = mk("trash"), Globe = mk("globe"), ChevronDown = mk("chevron-down");
 
 const DEFAULT_DNA =
 `Raagnaai Ads helps businesses generate local visibility, leads, and brand recall through traditional marketing — Auto Tops, Bus Branding, Wall Paintings, Hoardings, Pole Kiosks, No Parking Boards, Canter Campaigns, Printing, and other hyperlocal outdoor advertising, with end-to-end execution and reporting.
@@ -430,10 +431,22 @@ function GateShell({ icon, title, children, done }) {
     <div className="p-5">{children}</div>
   </section>;
 }
-function Field({ label, value, onChange, rows = 2 }) {
-  return <div className="mb-3">
-    <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{label}</div>
+function Field({ label, value, onChange, rows = 2, hideLabel }) {
+  return <div className={hideLabel ? "" : "mb-3"}>
+    {!hideLabel && <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>{label}</div>}
     <textarea value={value || ""} onChange={e => onChange(e.target.value)} rows={rows} className="w-full p-3 rounded-lg" style={{ background: C.paper, border: `1px solid ${C.line}`, fontSize: 14, lineHeight: 1.55, resize: "vertical", color: C.ink }} />
+  </div>;
+}
+// A tappable section that opens/closes on its own. Used on the review screen so each
+// caption/script can be read one at a time. defaultOpen controls the first-load state.
+function Collapsible({ label, defaultOpen, children }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return <div className="mb-2.5 rounded-lg overflow-hidden" style={{ border: `1px solid ${C.line}`, background: C.panel }}>
+    <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-3.5 py-3" style={{ background: C.chip, textAlign: "left", cursor: "pointer" }}>
+      <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+      <ChevronDown size={16} style={{ color: C.sub, flexShrink: 0, transition: "transform .15s", transform: open ? "rotate(180deg)" : "none" }} />
+    </button>
+    {open && <div className="px-3.5 py-3">{children}</div>}
   </div>;
 }
 function CorrectBox({ buttons }) {
@@ -465,15 +478,17 @@ function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
       {p._meta.drafts && <details style={{ marginTop: 6 }}><summary style={{ fontSize: 12, color: C.sub, cursor: "pointer" }}>see the {Object.keys(p._meta.drafts).length} model drafts</summary><pre style={{ fontSize: 11, fontFamily: FONT_MONO, overflow: "auto", maxHeight: 240, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: 10, marginTop: 6 }}>{JSON.stringify(p._meta.drafts, null, 2)}</pre></details>}
     </div>}
 
-    {vlangs.map(L => <Field key={L} label={`${LANG_LABEL[L]} voiceover (for the ${LANG_LABEL[L]} video)`} rows={3} value={p.scripts?.[L]?.full_voiceover_text} onChange={v => setPath(["scripts", L, "full_voiceover_text"], v)} />)}
+    {vlangs.map((L, i) => <Collapsible key={L} label={`${LANG_LABEL[L]} voiceover (for the ${LANG_LABEL[L]} video)`} defaultOpen={i === 0}>
+      <Field hideLabel rows={3} value={p.scripts?.[L]?.full_voiceover_text} onChange={v => setPath(["scripts", L, "full_voiceover_text"], v)} />
+    </Collapsible>)}
 
-    <div style={{ height: 1, background: C.line, margin: "8px 0 14px" }} />
-    {has("instagram") && <Field label="Instagram caption (Telugu)" value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} />}
-    {has("facebook") && <Field label="Facebook caption (Telugu)" value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} />}
-    {has("linkedin") && <Field label="LinkedIn post (English)" value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} />}
-    {has("youtube") && <Field label="YouTube title (Telugu video) + English description" rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} />}
-    {has("gmb") && <Field label="Google Business post (Telugu)" value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} />}
-    {has("blog") && <Field label="Blog (English, HTML)" rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} />}
+    <div style={{ height: 1, background: C.line, margin: "10px 0 12px" }} />
+    {has("instagram") && <Collapsible label="Instagram caption (Telugu)"><Field hideLabel value={p.captions?.instagram?.text} onChange={v => setPath(["captions", "instagram", "text"], v)} /></Collapsible>}
+    {has("facebook") && <Collapsible label="Facebook caption (Telugu)"><Field hideLabel value={p.captions?.facebook?.text} onChange={v => setPath(["captions", "facebook", "text"], v)} /></Collapsible>}
+    {has("linkedin") && <Collapsible label="LinkedIn post (English)"><Field hideLabel value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} /></Collapsible>}
+    {has("youtube") && <Collapsible label="YouTube title (Telugu video) + English description"><Field hideLabel rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} /></Collapsible>}
+    {has("gmb") && <Collapsible label="Google Business post (Telugu)"><Field hideLabel value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} /></Collapsible>}
+    {has("blog") && <Collapsible label="Blog (English, HTML)"><Field hideLabel rows={5} value={p.blog?.body_html} onChange={v => setPath(["blog", "body_html"], v)} /></Collapsible>}
 
     {!done && <div className="flex flex-wrap items-center gap-3 mt-2">
       <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
