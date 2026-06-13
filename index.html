@@ -412,6 +412,73 @@ function NewJob({ onCancel, onCreated }) {
   );
 }
 
+// Builds the per-channel items sent to Make — reused by first-time posting AND re-posting.
+// Uses the already-hosted video/image URLs, so re-posting never re-renders (no cost).
+function buildPostItems(job, vlangs, channels) {
+  const p = job.package || {};
+  return channels.map(ch => {
+    const want = (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).video;
+    const vlang = vlangs.includes(want) ? want : vlangs[0];
+    const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
+    if (ch === "facebook") item.text = p.captions?.facebook?.text;
+    else if (ch === "instagram") item.text = p.captions?.instagram?.text;
+    else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
+    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; }
+    else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
+    else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; }
+    return item;
+  });
+}
+
+// Re-send an existing post's already-made video to chosen channels — no re-render, no cost.
+function RepostPanel({ job, settings, patch }) {
+  const vlangs = (job.input.videoLangs && job.input.videoLangs.length) ? job.input.videoLangs : videoLangsOf(job.input.platforms);
+  const allChannels = job.input.platforms || [];
+  const [sel, setSel] = useState(() => new Set(allChannels));
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const hasVideo = job.video && Object.keys(job.video).some(L => job.video[L] && job.video[L].url && job.video[L].url !== "SIMULATED_VIDEO");
+  const labelOf = (c) => (PLATFORMS.find(p => p.id === c) || {}).label || c;
+  const toggle = (ch) => setSel(s => { const n = new Set(s); n.has(ch) ? n.delete(ch) : n.add(ch); return n; });
+  const chosen = allChannels.filter(c => sel.has(c));
+  async function go() {
+    if (!chosen.length) return;
+    setBusy(true); setMsg(null); setConfirming(false);
+    try {
+      const items = buildPostItems(job, vlangs, chosen);
+      await backendCall(settings, "post", { items });
+      patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...chosen])), status: "done", history: [...(j.history || []), { at: Date.now(), action: "repost", channels: chosen }] }));
+      setMsg({ ok: true, text: `Re-sent to ${chosen.map(labelOf).join(", ")}.` });
+    } catch (e) { setMsg({ ok: false, text: e.message }); }
+    setBusy(false);
+  }
+  return <GateShell icon="rotate-ccw" title="Re-post (no new video)">
+    <div className="p-5">
+      {!hasVideo ? (
+        <div style={{ fontSize: 13.5, color: C.sub }}>Re-post becomes available once this post has a generated video. It re-sends the existing video to your channels without making a new one.</div>
+      ) : (
+        <div>
+          <div style={{ fontSize: 13, color: C.sub, marginBottom: 10 }}>Re-send the existing video to your channels — no new render, no cost. Pick channels (all selected by default).</div>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {allChannels.map(ch => { const on = sel.has(ch); return <button key={ch} onClick={() => toggle(ch)} className="px-3 py-1.5 rounded-lg" style={{ fontSize: 13, fontWeight: 500, background: on ? "#f7e4dd" : C.paper, color: on ? C.vermDk : C.ink, border: `1px solid ${on ? C.vermilion : C.line}` }}>{on && <Check size={12} style={{ display: "inline", marginRight: 5, marginTop: -2 }} />}{labelOf(ch)}</button>; })}
+          </div>
+          {msg && <div className="mb-3" style={{ fontSize: 13, color: msg.ok ? C.green : C.vermilion }}>{msg.text}</div>}
+          {!confirming ? (
+            <button onClick={() => { setMsg(null); setConfirming(true); }} disabled={busy || !chosen.length} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: chosen.length ? C.purple : C.line, color: "#fff", fontWeight: 500, fontSize: 14 }}><Ico n="rotate-ccw" size={15} /> Re-post</button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <span style={{ fontSize: 13.5, color: C.ink }}>Re-send to <b>{chosen.map(labelOf).join(", ")}</b>?</span>
+              <button onClick={go} disabled={busy} className="flex items-center gap-2 px-4 py-2 rounded-lg" style={{ background: C.purple, color: "#fff", fontWeight: 500, fontSize: 13.5 }}><Send size={14} /> {busy ? "Sending…" : "Confirm re-post"}</button>
+              <button onClick={() => setConfirming(false)} disabled={busy} className="px-4 py-2 rounded-lg" style={{ background: C.paper, color: C.ink, border: `1px solid ${C.line}`, fontSize: 13.5 }}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  </GateShell>;
+}
+
 function JobDetail({ job, settings, patch, onBack }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -465,19 +532,7 @@ function JobDetail({ job, settings, patch, onBack }) {
   async function doPost() {
     setBusy(true); setErr(null); patch({ status: "posting" });
     try {
-      const p = job.package;
-      const items = job.input.platforms.map(ch => {
-        const want = (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).video;
-        const vlang = vlangs.includes(want) ? want : vlangs[0];
-        const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
-        if (ch === "facebook") item.text = p.captions?.facebook?.text;
-        else if (ch === "instagram") item.text = p.captions?.instagram?.text;
-        else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
-        else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; }
-        else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
-        else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; }
-        return item;
-      });
+      const items = buildPostItems(job, vlangs, job.input.platforms);
       await backendCall(settings, "post", { items });
       patch({ posted: job.input.platforms, status: "done" });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
@@ -505,6 +560,7 @@ function JobDetail({ job, settings, patch, onBack }) {
       {["video_review", "posting", "done"].includes(job.status) && job.video && Object.keys(job.video).length > 0 &&
         <VideoGate job={job} vlangs={vlangs} busy={busy} onApprove={doPost} onFixVisual={runVideos} onFixScript={generateScript} />}
       {job.status === "done" && <PostedCard job={job} />}
+      <RepostPanel job={job} settings={settings} patch={patch} />
     </div>
   );
 }
