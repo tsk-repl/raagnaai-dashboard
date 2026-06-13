@@ -97,6 +97,45 @@ const store = {
   get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
+
+// ---- shared post list across devices/teammates (stored in the backend DB) ----
+const WORKSPACE = "raagnaai"; // one shared list for the team; becomes a per-customer id if this grows into a SaaS
+function bestHostedImage(job) {
+  const v = job.video || {};
+  for (const L of Object.keys(v)) { const u = v[L] && v[L].imageUrl; if (u && /^https?:/.test(u)) return u; }
+  const dl = job.input && job.input.imageDataUrl;
+  if (dl && /^https?:/.test(dl)) return dl;
+  return null;
+}
+// Strip the heavy uploaded-photo data before sending to the shared DB — keeps records tiny
+// (text + links) and uses a hosted image for the thumbnail so other devices still see it.
+function slimJob(job) {
+  const input = { ...(job.input || {}) };
+  delete input.imageBase64; delete input.imageMediaType;
+  if (Array.isArray(input.images)) delete input.images;
+  const thumb = bestHostedImage(job);
+  if (input.imageDataUrl && /^data:/.test(input.imageDataUrl)) { if (thumb) input.imageDataUrl = thumb; else delete input.imageDataUrl; }
+  return { ...job, input };
+}
+const postsApi = {
+  base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
+  async list(settings) { const r = await fetch(`${this.base(settings)}/posts?owner=${WORKSPACE}`); if (!r.ok) throw new Error(`list ${r.status}`); return r.json(); },
+  async save(settings, job) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(job.id)}?owner=${WORKSPACE}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: WORKSPACE, job: slimJob(job) }) }); if (!r.ok) throw new Error(`save ${r.status}`); return r.json(); },
+  async remove(settings, id) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(id)}?owner=${WORKSPACE}`, { method: "DELETE" }); if (!r.ok) throw new Error(`remove ${r.status}`); return r.json(); },
+};
+// Merge the device's local copies with the shared server list. The server is the source of
+// truth for which posts exist and their latest content; local heavy images are kept so the
+// device that uploaded them can still render.
+function mergeJobs(local, server) {
+  const byId = {};
+  (server || []).forEach(j => { byId[j.id] = j; });
+  (local || []).forEach(j => {
+    const s = byId[j.id];
+    if (s) byId[j.id] = { ...s, input: { ...s.input, imageBase64: j.input && j.input.imageBase64, imageMediaType: j.input && j.input.imageMediaType, images: j.input && j.input.images, imageDataUrl: (j.input && j.input.imageDataUrl) || (s.input && s.input.imageDataUrl) } };
+    else byId[j.id] = j;
+  });
+  return Object.values(byId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
 function audioDuration(url) {
   return new Promise(res => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(a.duration || 0); a.onerror = () => res(0); a.src = url; });
 }
@@ -137,17 +176,33 @@ function App() {
   const [activeId, setActiveId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [ready, setReady] = useState(false);
+  const syncTimers = useRef({});
+  function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
   useEffect(() => {
-    const j = store.get("raagnaai:jobs"); if (j) setJobs(j);
+    const cached = store.get("raagnaai:jobs"); if (cached) setJobs(cached); // show instantly
     const s = store.get("raagnaai:settings"); if (s) setSettings(prev => ({ ...prev, ...s }));
     setReady(true);
+    // pull the shared team list from the backend (source of truth across devices)
+    (async () => {
+      try {
+        const server = await postsApi.list({ backendUrl: (s && s.backendUrl) || DEFAULT_BACKEND });
+        setJobs(prev => mergeJobs(prev, server));
+      } catch (_) { /* offline or storage not set up — keep the local cache */ }
+    })();
   }, []);
   useEffect(() => { if (ready) store.set("raagnaai:jobs", jobs); }, [jobs, ready]);
   useEffect(() => { if (ready) store.set("raagnaai:settings", settings); }, [settings, ready]);
 
   const activeJob = jobs.find(j => j.id === activeId);
-  function patchJob(id, patch) { setJobs(js => js.map(j => j.id === id ? { ...j, ...(typeof patch === "function" ? patch(j) : patch) } : j)); }
+  function patchJob(id, patch) {
+    setJobs(js => {
+      const next = js.map(j => j.id === id ? { ...j, ...(typeof patch === "function" ? patch(j) : patch) } : j);
+      const updated = next.find(j => j.id === id);
+      if (updated) { clearTimeout(syncTimers.current[id]); syncTimers.current[id] = setTimeout(() => syncSave(updated), 700); }
+      return next;
+    });
+  }
   function openJob(id) { setActiveId(id); setView("job"); }
 
   return (
@@ -169,8 +224,8 @@ function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-7">
-        {view === "list" && <JobList jobs={jobs} onNew={() => setView("new")} onOpen={openJob} onDelete={(id) => setJobs(js => js.filter(j => j.id !== id))} />}
-        {view === "new" && <NewJob onCancel={() => setView("list")} onCreated={(job) => { setJobs(js => [job, ...js]); openJob(job.id); }} />}
+        {view === "list" && <JobList jobs={jobs} onNew={() => setView("new")} onOpen={openJob} onDelete={(id) => { setJobs(js => js.filter(j => j.id !== id)); postsApi.remove(settings, id).catch(() => {}); }} />}
+        {view === "new" && <NewJob onCancel={() => setView("list")} onCreated={(job) => { setJobs(js => [job, ...js]); syncSave(job); openJob(job.id); }} />}
         {view === "job" && activeJob && <JobDetail job={activeJob} settings={settings} patch={(p) => patchJob(activeJob.id, p)} onBack={() => setView("list")} />}
       </main>
 
