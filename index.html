@@ -183,11 +183,17 @@ function App() {
     const cached = store.get("raagnaai:jobs"); if (cached) setJobs(cached); // show instantly
     const s = store.get("raagnaai:settings"); if (s) setSettings(prev => ({ ...prev, ...s }));
     setReady(true);
-    // pull the shared team list from the backend (source of truth across devices)
+    // pull the shared team list from the backend (source of truth across devices),
+    // then push up any local posts the server hasn't seen yet (back-catalogue sync)
     (async () => {
+      const settingsForSync = { backendUrl: (s && s.backendUrl) || DEFAULT_BACKEND };
       try {
-        const server = await postsApi.list({ backendUrl: (s && s.backendUrl) || DEFAULT_BACKEND });
-        setJobs(prev => mergeJobs(prev, server));
+        const server = await postsApi.list(settingsForSync);
+        const serverIds = new Set((server || []).map(j => j.id));
+        const merged = mergeJobs(cached || [], server);
+        setJobs(merged);
+        // upload local-only posts so they appear on every device
+        (cached || []).forEach(j => { if (j && j.id && !serverIds.has(j.id)) { postsApi.save(settingsForSync, j).catch(() => {}); } });
       } catch (_) { /* offline or storage not set up — keep the local cache */ }
     })();
   }, []);
