@@ -123,6 +123,16 @@ const postsApi = {
   async save(settings, job) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(job.id)}?owner=${WORKSPACE}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: WORKSPACE, job: slimJob(job) }) }); if (!r.ok) throw new Error(`save ${r.status}`); return r.json(); },
   async remove(settings, id) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(id)}?owner=${WORKSPACE}`, { method: "DELETE" }); if (!r.ok) throw new Error(`remove ${r.status}`); return r.json(); },
 };
+// Brand settings that sync across devices. Backend URL and simulate are deliberately NOT
+// synced — they stay device-local so a bad value (or a teammate's test toggle) can't knock
+// every device offline at once.
+const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType"];
+function syncedSettings(settings) { const o = {}; SYNCED_SETTING_KEYS.forEach(k => { if (settings[k] !== undefined) o[k] = settings[k]; }); return o; }
+const settingsApi = {
+  base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
+  async get(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${WORKSPACE}`); if (!r.ok) throw new Error(`settings ${r.status}`); return r.json(); },
+  async save(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${WORKSPACE}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: WORKSPACE, settings: syncedSettings(settings) }) }); if (!r.ok) throw new Error(`settings save ${r.status}`); return r.json(); },
+};
 // Merge the device's local copies with the shared server list. The server is the source of
 // truth for which posts exist and their latest content; local heavy images are kept so the
 // device that uploaded them can still render.
@@ -177,13 +187,14 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [ready, setReady] = useState(false);
   const syncTimers = useRef({});
+  const settingsTimer = useRef(null);
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
   useEffect(() => {
     const cached = store.get("raagnaai:jobs"); if (cached) setJobs(cached); // show instantly
     const s = store.get("raagnaai:settings"); if (s) setSettings(prev => ({ ...prev, ...s }));
     setReady(true);
-    // pull the shared team list from the backend (source of truth across devices),
+    // pull the shared team list + brand settings from the backend (source of truth across devices),
     // then push up any local posts the server hasn't seen yet (back-catalogue sync)
     (async () => {
       const settingsForSync = { backendUrl: (s && s.backendUrl) || DEFAULT_BACKEND };
@@ -192,13 +203,24 @@ function App() {
         const serverIds = new Set((server || []).map(j => j.id));
         const merged = mergeJobs(cached || [], server);
         setJobs(merged);
-        // upload local-only posts so they appear on every device
         (cached || []).forEach(j => { if (j && j.id && !serverIds.has(j.id)) { postsApi.save(settingsForSync, j).catch(() => {}); } });
       } catch (_) { /* offline or storage not set up — keep the local cache */ }
+      // shared brand settings (logo, voice id, Business DNA) — keep Backend URL/simulate local
+      try {
+        const remote = await settingsApi.get(settingsForSync);
+        if (remote && Object.keys(remote).length) setSettings(prev => ({ ...prev, ...remote }));
+        else if (s) settingsApi.save({ ...s, backendUrl: settingsForSync.backendUrl }).catch(() => {}); // seed shared settings from this device
+      } catch (_) { /* keep local settings */ }
     })();
   }, []);
   useEffect(() => { if (ready) store.set("raagnaai:jobs", jobs); }, [jobs, ready]);
-  useEffect(() => { if (ready) store.set("raagnaai:settings", settings); }, [settings, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    store.set("raagnaai:settings", settings);
+    // push brand settings to the shared store (debounced); Backend URL/simulate stay local
+    clearTimeout(settingsTimer.current);
+    settingsTimer.current = setTimeout(() => { settingsApi.save(settings).catch(() => {}); }, 800);
+  }, [settings, ready]);
 
   const activeJob = jobs.find(j => j.id === activeId);
   function patchJob(id, patch) {
