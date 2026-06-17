@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Raagnaai Ads — Content Engine</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" crossorigin></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -17,6 +17,36 @@ textarea, input { font-family: "Spline Sans", system-ui, sans-serif; }
 </head>
 <body>
 <div id="root"></div>
+<script>
+  /* Self-diagnosing guard: if the app hasn't rendered in a few seconds,
+     show the real reason on the page instead of a blank screen. */
+  window.__loadErrs = [];
+  window.addEventListener("error", function (e) {
+    var m = (e && e.message) ? e.message : "Script error";
+    if (e && e.filename) m += "  (" + e.filename + ":" + (e.lineno || 0) + ")";
+    window.__loadErrs.push(m);
+  }, true);
+  setTimeout(function () {
+    var r = document.getElementById("root");
+    if (!r || r.children.length > 0) return; // app rendered fine
+    var missing = [];
+    if (typeof React === "undefined") missing.push("React");
+    if (typeof ReactDOM === "undefined") missing.push("ReactDOM");
+    if (typeof Babel === "undefined") missing.push("Babel (JSX compiler)");
+    var msg = missing.length
+      ? "These libraries failed to download: <b>" + missing.join(", ") + "</b>.<br>This is almost always a network/CDN issue \u2014 try a hard refresh (Ctrl+Shift+R), switch network (e.g. mobile hotspot), or pause any ad-blocker/VPN, then reload."
+      : "A runtime error stopped the app from loading.";
+    r.innerHTML =
+      '<div style="font-family:system-ui,sans-serif;max-width:660px;margin:60px auto;padding:26px;border:1px solid #ddd4c2;border-radius:14px;background:#fbf8f1;color:#221f1a;line-height:1.6">' +
+      '<div style="font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#cf4a26;font-weight:700;margin-bottom:8px">Raagnaai Ads</div>' +
+      '<h2 style="margin:0 0 10px;font-size:20px">The dashboard didn\u2019t load</h2>' +
+      '<p style="color:#6b6457;margin:0 0 14px">' + msg + "</p>" +
+      (window.__loadErrs.length
+        ? '<pre style="white-space:pre-wrap;background:#f4efe4;padding:12px;border-radius:8px;font-size:12px;color:#9c3417;margin:0">' + window.__loadErrs.join("\n") + "</pre>"
+        : "") +
+      "</div>";
+  }, 5000);
+</script>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
