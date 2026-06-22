@@ -235,6 +235,7 @@ function App() {
   const [activeClientId, setActiveClientId] = useState("raagnaai");
   const syncTimers = useRef({});
   const settingsTimer = useRef(null);
+  const hydrated = useRef(false);   // becomes true after a client's real settings finish loading; guards auto-save from overwriting with empties
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
   const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "" };
@@ -283,12 +284,14 @@ function App() {
       setClients(roster);
       store.set("raagnaai:clients", roster);
       await loadClientData(lastActive, settingsForSync);
+      hydrated.current = true;   // real settings are in — safe to auto-save edits now
     })();
   }, []);
   useEffect(() => { if (ready) store.set(jobsKey(activeClientId), jobs); }, [jobs, ready, activeClientId]);
   useEffect(() => {
     if (!ready) return;
     store.set("raagnaai:global", { backendUrl: settings.backendUrl, simulate: settings.simulate });
+    if (!hydrated.current) return;   // don't push brand settings up until the real ones have loaded (prevents wiping voice/logo/DNA)
     store.set(brandKey(activeClientId), syncedSettings(settings));
     clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(() => { settingsApi.save(settings).catch(() => {}); }, 800);
@@ -299,7 +302,8 @@ function App() {
     setActiveClientId(id);
     store.set("raagnaai:activeClient", id);
     setView("list"); setActiveId(null); setShowSettings(false);
-    loadClientData(id, { backendUrl: settings.backendUrl || DEFAULT_BACKEND });
+    hydrated.current = false;
+    loadClientData(id, { backendUrl: settings.backendUrl || DEFAULT_BACKEND }).finally(() => { hydrated.current = true; });
   }
   function addClient(name) {
     const nm = String(name || "").trim(); if (!nm) return;
