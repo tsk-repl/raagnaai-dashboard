@@ -215,9 +215,10 @@ async function backendCall(settings, path, body) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   if (!res.ok) {
-    let detail = "";
-    try { const j = await res.json(); detail = j.error || ""; } catch (_) {}
-    throw new Error(`Backend ${path} failed (${res.status})${detail ? ": " + detail : ""}`);
+    let j = null; try { j = await res.json(); } catch (_) {}
+    const err = new Error(`Backend ${path} failed (${res.status})${j && j.error ? ": " + j.error : ""}`);
+    if (j && j.results) err.results = j.results;
+    throw err;
   }
   return res.json();
 }
@@ -550,7 +551,13 @@ function RepostPanel({ job, settings, patch }) {
       setMsg(failed.length
         ? { ok: false, text: `Posted: ${okChans.map(labelOf).join(", ") || "none"}. Failed: ${failed.map(f => labelOf(f.channel) + (f.error ? " (" + f.error + ")" : "")).join("; ")}` }
         : { ok: true, text: `Re-sent to ${okChans.map(labelOf).join(", ")}.` });
-    } catch (e) { setMsg({ ok: false, text: e.message }); }
+    } catch (e) {
+      if (e.results && e.results.length) {
+        patch({ lastResults: e.results });
+        const failed = e.results.filter(r => !r.ok);
+        setMsg({ ok: false, text: `Failed: ${failed.map(f => labelOf(f.channel) + (f.error ? " (" + f.error + ")" : "")).join("; ")}` });
+      } else setMsg({ ok: false, text: e.message });
+    }
     setBusy(false);
   }
   return <GateShell icon="rotate-ccw" title="Re-post (no new video)">
@@ -635,7 +642,10 @@ function JobDetail({ job, settings, patch, onBack }) {
       const items = buildPostItems(job, vlangs, job.input.platforms);
       const resp = await backendCall(settings, "post", { items, owner: activeOwner });
       patch({ posted: (resp && resp.posted) || job.input.platforms, status: "done", lastResults: (resp && resp.results) || null });
-    } catch (e) { setErr(e.message); patch({ status: "error" }); }
+    } catch (e) {
+      if (e.results && e.results.length) { patch({ status: "done", posted: e.results.filter(r => r.ok).map(r => r.channel), lastResults: e.results }); }
+      else { setErr(e.message); patch({ status: "error" }); }
+    }
     setBusy(false);
   }
 
