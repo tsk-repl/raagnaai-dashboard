@@ -208,7 +208,7 @@ async function backendCall(settings, path, body) {
     await new Promise(r => setTimeout(r, 1200));
     if (path === "generate-audio") return { audioUrl: "SIMULATED_AUDIO", seconds: body.estSeconds || 28 };
     if (path === "render-video") return { videoUrl: "SIMULATED_VIDEO", imageUrl: "SIMULATED_IMAGE" };
-    if (path === "post") return { posted: (body.items || []).map(i => i.channel) };
+    if (path === "post") { const cs = (body.items || []).map(i => i.channel); return { posted: cs, results: cs.map(c => ({ channel: c, ok: true })) }; }
     return {};
   }
   const res = await fetch(`${settings.backendUrl.replace(/\/$/, "")}/${path}`, {
@@ -542,9 +542,14 @@ function RepostPanel({ job, settings, patch }) {
     setBusy(true); setMsg(null); setConfirming(false);
     try {
       const items = buildPostItems(job, vlangs, chosen);
-      await backendCall(settings, "post", { items, owner: activeOwner });
-      patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...chosen])), status: "done", history: [...(j.history || []), { at: Date.now(), action: "repost", channels: chosen }] }));
-      setMsg({ ok: true, text: `Re-sent to ${chosen.map(labelOf).join(", ")}.` });
+      const resp = await backendCall(settings, "post", { items, owner: activeOwner });
+      const okChans = (resp && resp.posted) || chosen;
+      const results = (resp && resp.results) || null;
+      patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...okChans])), status: "done", lastResults: results, history: [...(j.history || []), { at: Date.now(), action: "repost", channels: chosen }] }));
+      const failed = results ? results.filter(r => !r.ok) : [];
+      setMsg(failed.length
+        ? { ok: false, text: `Posted: ${okChans.map(labelOf).join(", ") || "none"}. Failed: ${failed.map(f => labelOf(f.channel) + (f.error ? " (" + f.error + ")" : "")).join("; ")}` }
+        : { ok: true, text: `Re-sent to ${okChans.map(labelOf).join(", ")}.` });
     } catch (e) { setMsg({ ok: false, text: e.message }); }
     setBusy(false);
   }
@@ -628,8 +633,8 @@ function JobDetail({ job, settings, patch, onBack }) {
     setBusy(true); setErr(null); patch({ status: "posting" });
     try {
       const items = buildPostItems(job, vlangs, job.input.platforms);
-      await backendCall(settings, "post", { items, owner: activeOwner });
-      patch({ posted: job.input.platforms, status: "done" });
+      const resp = await backendCall(settings, "post", { items, owner: activeOwner });
+      patch({ posted: (resp && resp.posted) || job.input.platforms, status: "done", lastResults: (resp && resp.results) || null });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
     setBusy(false);
   }
@@ -807,10 +812,21 @@ function VideoGate({ job, vlangs, busy, onApprove, onFixVisual, onFixScript }) {
   </GateShell>;
 }
 
+function chLabel(c) { return (PLATFORMS.find(p => p.id === c) || {}).label || c; }
 function PostedCard({ job }) {
-  return <div className="rounded-2xl p-5" style={{ background: "#eef4e6", border: `1px solid ${C.green}44` }}>
-    <div className="flex items-center gap-2" style={{ color: C.green }}><Check size={18} /><span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>Posted</span></div>
-    <div style={{ fontSize: 14, color: C.ink, marginTop: 6 }}>Sent to: {(job.posted || job.input.platforms).join(", ")}.</div>
+  const results = job.lastResults;
+  const failed = results ? results.filter(r => !r.ok) : [];
+  const allOk = !results || failed.length === 0;
+  return <div className="rounded-2xl p-5" style={{ background: allOk ? "#eef4e6" : "#fbf0ea", border: `1px solid ${(allOk ? C.green : C.vermilion)}44` }}>
+    <div className="flex items-center gap-2" style={{ color: allOk ? C.green : C.vermDk }}><Check size={18} /><span style={{ fontFamily: FONT_DISPLAY, fontWeight: 500, fontSize: 16 }}>{allOk ? "Posted" : "Posted with issues"}</span></div>
+    {results
+      ? <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+          {results.map((r, i) => <div key={i} style={{ fontSize: 13.5, color: C.ink, display: "flex", alignItems: "flex-start", gap: 7 }}>
+            <span style={{ color: r.ok ? C.green : C.vermilion, fontWeight: 700 }}>{r.ok ? "✓" : "✗"}</span>
+            <span><b>{chLabel(r.channel)}</b>{!r.ok && r.error ? <span style={{ color: C.vermDk }}> — {r.error}</span> : (r.via === "make" ? <span style={{ color: C.sub }}> (via blog)</span> : null)}</span>
+          </div>)}
+        </div>
+      : <div style={{ fontSize: 14, color: C.ink, marginTop: 6 }}>Sent to: {(job.posted || job.input.platforms).join(", ")}.</div>}
   </div>;
 }
 
