@@ -542,7 +542,7 @@ function RepostPanel({ job, settings, patch }) {
     setBusy(true); setMsg(null); setConfirming(false);
     try {
       const items = buildPostItems(job, vlangs, chosen);
-      await backendCall(settings, "post", { items });
+      await backendCall(settings, "post", { items, owner: activeOwner });
       patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...chosen])), status: "done", history: [...(j.history || []), { at: Date.now(), action: "repost", channels: chosen }] }));
       setMsg({ ok: true, text: `Re-sent to ${chosen.map(labelOf).join(", ")}.` });
     } catch (e) { setMsg({ ok: false, text: e.message }); }
@@ -628,7 +628,7 @@ function JobDetail({ job, settings, patch, onBack }) {
     setBusy(true); setErr(null); patch({ status: "posting" });
     try {
       const items = buildPostItems(job, vlangs, job.input.platforms);
-      await backendCall(settings, "post", { items });
+      await backendCall(settings, "post", { items, owner: activeOwner });
       patch({ posted: job.input.platforms, status: "done" });
     } catch (e) { setErr(e.message); patch({ status: "error" }); }
     setBusy(false);
