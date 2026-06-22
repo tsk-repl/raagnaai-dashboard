@@ -129,7 +129,15 @@ const store = {
 };
 
 // ---- shared post list across devices/teammates (stored in the backend DB) ----
-const WORKSPACE = "raagnaai"; // one shared list for the team; becomes a per-customer id if this grows into a SaaS
+// Multi-tenant: the active client's id is used as the `owner` for all data.
+// Starts as the original "raagnaai" workspace so existing data carries over untouched.
+let activeOwner = "raagnaai";
+function setActiveOwner(id) { activeOwner = id; }
+const DEFAULT_CLIENT = { id: "raagnaai", name: "Raagnaai Ads" };
+function slugifyId(name) {
+  const base = String(name || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return (base || "client") + "-" + Math.random().toString(36).slice(2, 6);
+}
 function bestHostedImage(job) {
   const v = job.video || {};
   for (const L of Object.keys(v)) { const u = v[L] && v[L].imageUrl; if (u && /^https?:/.test(u)) return u; }
@@ -149,9 +157,15 @@ function slimJob(job) {
 }
 const postsApi = {
   base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
-  async list(settings) { const r = await fetch(`${this.base(settings)}/posts?owner=${WORKSPACE}`); if (!r.ok) throw new Error(`list ${r.status}`); return r.json(); },
-  async save(settings, job) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(job.id)}?owner=${WORKSPACE}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: WORKSPACE, job: slimJob(job) }) }); if (!r.ok) throw new Error(`save ${r.status}`); return r.json(); },
-  async remove(settings, id) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(id)}?owner=${WORKSPACE}`, { method: "DELETE" }); if (!r.ok) throw new Error(`remove ${r.status}`); return r.json(); },
+  async list(settings) { const r = await fetch(`${this.base(settings)}/posts?owner=${activeOwner}`); if (!r.ok) throw new Error(`list ${r.status}`); return r.json(); },
+  async save(settings, job) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(job.id)}?owner=${activeOwner}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: activeOwner, job: slimJob(job) }) }); if (!r.ok) throw new Error(`save ${r.status}`); return r.json(); },
+  async remove(settings, id) { const r = await fetch(`${this.base(settings)}/posts/${encodeURIComponent(id)}?owner=${activeOwner}`, { method: "DELETE" }); if (!r.ok) throw new Error(`remove ${r.status}`); return r.json(); },
+};
+// Client roster — the operator's list of clients, synced across devices.
+const clientsApi = {
+  base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
+  async list(settings) { const r = await fetch(`${this.base(settings)}/clients?roster=default`); if (!r.ok) throw new Error(`clients ${r.status}`); return r.json(); },
+  async save(settings, clients) { const r = await fetch(`${this.base(settings)}/clients?roster=default`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roster: "default", clients }) }); if (!r.ok) throw new Error(`clients save ${r.status}`); return r.json(); },
 };
 // Brand settings that sync across devices. Backend URL and simulate are deliberately NOT
 // synced — they stay device-local so a bad value (or a teammate's test toggle) can't knock
@@ -160,8 +174,8 @@ const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "log
 function syncedSettings(settings) { const o = {}; SYNCED_SETTING_KEYS.forEach(k => { if (settings[k] !== undefined) o[k] = settings[k]; }); return o; }
 const settingsApi = {
   base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
-  async get(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${WORKSPACE}`); if (!r.ok) throw new Error(`settings ${r.status}`); return r.json(); },
-  async save(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${WORKSPACE}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: WORKSPACE, settings: syncedSettings(settings) }) }); if (!r.ok) throw new Error(`settings save ${r.status}`); return r.json(); },
+  async get(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${activeOwner}`); if (!r.ok) throw new Error(`settings ${r.status}`); return r.json(); },
+  async save(settings) { const r = await fetch(`${this.base(settings)}/settings?owner=${activeOwner}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: activeOwner, settings: syncedSettings(settings) }) }); if (!r.ok) throw new Error(`settings save ${r.status}`); return r.json(); },
 };
 // Merge the device's local copies with the shared server list. The server is the source of
 // truth for which posts exist and their latest content; local heavy images are kept so the
@@ -216,41 +230,85 @@ function App() {
   const [activeId, setActiveId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [ready, setReady] = useState(false);
+  const [clients, setClients] = useState([DEFAULT_CLIENT]);
+  const [activeClientId, setActiveClientId] = useState("raagnaai");
   const syncTimers = useRef({});
   const settingsTimer = useRef(null);
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
+  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "" };
+  const jobsKey = (id) => `raagnaai:jobs:${id}`;
+  const brandKey = (id) => `raagnaai:brand:${id}`;
+
+  // Load one client's posts + brand settings (cache first, then backend). Scopes all data by client.
+  async function loadClientData(id, settingsForSync) {
+    setActiveOwner(id);
+    const cachedJobs = store.get(jobsKey(id)) || [];
+    setJobs(cachedJobs);
+    const cachedBrand = store.get(brandKey(id)) || {};
+    setSettings(prev => ({ ...prev, ...BRAND_DEFAULTS, ...cachedBrand }));
+    try {
+      const server = await postsApi.list(settingsForSync);
+      const serverIds = new Set((server || []).map(j => j.id));
+      setJobs(mergeJobs(cachedJobs, server));
+      cachedJobs.forEach(j => { if (j && j.id && !serverIds.has(j.id)) postsApi.save(settingsForSync, j).catch(() => {}); });
+    } catch (_) { /* offline — keep cache */ }
+    try {
+      const remote = await settingsApi.get(settingsForSync);
+      if (remote && Object.keys(remote).length) setSettings(prev => ({ ...prev, ...remote }));
+      else if (Object.keys(cachedBrand).length) settingsApi.save({ ...settingsForSync, ...cachedBrand }).catch(() => {});
+    } catch (_) { /* keep local */ }
+  }
+
   useEffect(() => {
-    const cached = store.get("raagnaai:jobs"); if (cached) setJobs(cached); // show instantly
-    const s = store.get("raagnaai:settings"); if (s) setSettings(prev => ({ ...prev, ...s }));
+    const g = store.get("raagnaai:global") || {};
+    const cachedClients = store.get("raagnaai:clients");
+    const lastActive = store.get("raagnaai:activeClient") || "raagnaai";
+    if (cachedClients && cachedClients.length) setClients(cachedClients);
+    setActiveClientId(lastActive);
+    setActiveOwner(lastActive);
+    setSettings(prev => ({ ...prev, ...g }));
     setReady(true);
-    // pull the shared team list + brand settings from the backend (source of truth across devices),
-    // then push up any local posts the server hasn't seen yet (back-catalogue sync)
+    const settingsForSync = { backendUrl: g.backendUrl || DEFAULT_BACKEND };
     (async () => {
-      const settingsForSync = { backendUrl: (s && s.backendUrl) || DEFAULT_BACKEND };
+      // client roster — source of truth across devices; seed with the default client if empty
+      let roster = (cachedClients && cachedClients.length) ? cachedClients : [DEFAULT_CLIENT];
       try {
-        const server = await postsApi.list(settingsForSync);
-        const serverIds = new Set((server || []).map(j => j.id));
-        const merged = mergeJobs(cached || [], server);
-        setJobs(merged);
-        (cached || []).forEach(j => { if (j && j.id && !serverIds.has(j.id)) { postsApi.save(settingsForSync, j).catch(() => {}); } });
-      } catch (_) { /* offline or storage not set up — keep the local cache */ }
-      // shared brand settings (logo, voice id, Business DNA) — keep Backend URL/simulate local
-      try {
-        const remote = await settingsApi.get(settingsForSync);
-        if (remote && Object.keys(remote).length) setSettings(prev => ({ ...prev, ...remote }));
-        else if (s) settingsApi.save({ ...s, backendUrl: settingsForSync.backendUrl }).catch(() => {}); // seed shared settings from this device
-      } catch (_) { /* keep local settings */ }
+        const res = await clientsApi.list(settingsForSync);
+        if (res && Array.isArray(res.clients) && res.clients.length) roster = res.clients;
+        else clientsApi.save(settingsForSync, roster).catch(() => {}); // seed first time
+      } catch (_) { /* offline — use cache */ }
+      if (!roster.find(c => c.id === lastActive)) roster = [DEFAULT_CLIENT, ...roster.filter(c => c.id !== DEFAULT_CLIENT.id)];
+      setClients(roster);
+      store.set("raagnaai:clients", roster);
+      await loadClientData(lastActive, settingsForSync);
     })();
   }, []);
-  useEffect(() => { if (ready) store.set("raagnaai:jobs", jobs); }, [jobs, ready]);
+  useEffect(() => { if (ready) store.set(jobsKey(activeClientId), jobs); }, [jobs, ready, activeClientId]);
   useEffect(() => {
     if (!ready) return;
-    store.set("raagnaai:settings", settings);
-    // push brand settings to the shared store (debounced); Backend URL/simulate stay local
+    store.set("raagnaai:global", { backendUrl: settings.backendUrl, simulate: settings.simulate });
+    store.set(brandKey(activeClientId), syncedSettings(settings));
     clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(() => { settingsApi.save(settings).catch(() => {}); }, 800);
-  }, [settings, ready]);
+  }, [settings, ready, activeClientId]);
+
+  function switchClient(id) {
+    if (id === activeClientId) return;
+    setActiveClientId(id);
+    store.set("raagnaai:activeClient", id);
+    setView("list"); setActiveId(null); setShowSettings(false);
+    loadClientData(id, { backendUrl: settings.backendUrl || DEFAULT_BACKEND });
+  }
+  function addClient(name) {
+    const nm = String(name || "").trim(); if (!nm) return;
+    const c = { id: slugifyId(nm), name: nm };
+    const next = [...clients, c];
+    setClients(next);
+    store.set("raagnaai:clients", next);
+    clientsApi.save({ backendUrl: settings.backendUrl || DEFAULT_BACKEND }, next).catch(() => {});
+    switchClient(c.id);
+  }
 
   const activeJob = jobs.find(j => j.id === activeId);
   function patchJob(id, patch) {
@@ -277,6 +335,13 @@ function App() {
         </div>
         <div className="flex items-center gap-2">
           {settings.simulate && <span style={{ fontSize: 11, color: C.amber, background: "#f7edd6", border: `1px solid #e7d3a3`, padding: "4px 9px", borderRadius: 999, fontFamily: FONT_MONO }}>simulate mode</span>}
+          <div className="flex items-center gap-1.5" title="Active client workspace">
+            <span style={{ fontSize: 11, color: C.sub, fontFamily: FONT_MONO, textTransform: "uppercase", letterSpacing: "0.06em" }}>Client</span>
+            <select value={activeClientId} onChange={e => { if (e.target.value === "__add__") { const nm = window.prompt("New client name:"); if (nm) addClient(nm); } else switchClient(e.target.value); }} style={{ fontSize: 13, padding: "7px 9px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel, color: C.ink, fontWeight: 500, maxWidth: 180 }}>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__add__">＋ Add client…</option>
+            </select>
+          </div>
           <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.line}`, background: C.panel, fontSize: 13 }}><Settings size={15} /> Settings</button>
         </div>
       </header>
