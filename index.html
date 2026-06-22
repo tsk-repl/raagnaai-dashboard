@@ -523,7 +523,7 @@ function buildPostItems(job, vlangs, channels) {
     if (ch === "facebook") item.text = p.captions?.facebook?.text;
     else if (ch === "instagram") item.text = p.captions?.instagram?.text;
     else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
-    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; }
+    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; }
     else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
     else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; }
     return item;
@@ -593,6 +593,8 @@ function RepostPanel({ job, settings, patch }) {
 function JobDetail({ job, settings, patch, onBack }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgMsg, setImgMsg] = useState(null);
   const vlangs = (job.input.videoLangs && job.input.videoLangs.length) ? job.input.videoLangs : videoLangsOf(job.input.platforms);
 
   async function generateScript(feedback) {
@@ -652,6 +654,28 @@ function JobDetail({ job, settings, patch, onBack }) {
     }
     setBusy(false);
   }
+  // Image/text channels (Google Business, blog) don't need a voiceover or video — post them straight from the review stage.
+  const IMAGE_CHANNELS = ["gmb", "blog"];
+  async function postImageOnly() {
+    const chans = (job.input.platforms || []).filter(c => IMAGE_CHANNELS.includes(c));
+    if (!chans.length) return;
+    setImgBusy(true); setImgMsg(null);
+    try {
+      const items = buildPostItems(job, vlangs, chans);
+      const resp = await backendCall(settings, "post", { items, owner: activeOwner });
+      const ok = (resp && resp.posted) || chans;
+      patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...ok])), lastResults: (resp && resp.results) || j.lastResults, history: [...(j.history || []), { at: Date.now(), action: "post-image", channels: chans }] }));
+      setImgMsg({ ok: true, text: `Posted to ${ok.map(chLabel).join(", ")} (no video).` });
+    } catch (e) {
+      if (e.results && e.results.length) {
+        const ok = e.results.filter(r => r.ok).map(r => r.channel);
+        patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...ok])), lastResults: e.results }));
+        const failed = e.results.filter(r => !r.ok);
+        setImgMsg({ ok: false, text: `${ok.length ? "Posted: " + ok.map(chLabel).join(", ") + ". " : ""}Failed: ${failed.map(f => chLabel(f.channel) + (f.error ? " (" + f.error + ")" : "")).join("; ")}` });
+      } else setImgMsg({ ok: false, text: e.message });
+    }
+    setImgBusy(false);
+  }
 
   const st = STATUS[job.status] || {};
   return (
@@ -668,7 +692,7 @@ function JobDetail({ job, settings, patch, onBack }) {
         job.status === "video_render" ? "Rendering the videos (this can take a few minutes)…" :
         job.status === "posting" ? "Posting to your channels…" : "The brain is working…"} />}
 
-      {job.package && <ScriptGate job={job} vlangs={vlangs} busy={busy} onEdit={(pkg) => patch({ package: pkg })} onApprove={runAudios} onCorrect={generateScript} />}
+      {job.package && <ScriptGate job={job} vlangs={vlangs} busy={busy} onEdit={(pkg) => patch({ package: pkg })} onApprove={runAudios} onCorrect={generateScript} onPostImage={postImageOnly} imgBusy={imgBusy} imgMsg={imgMsg} />}
       {["audio_review", "video_render", "video_review", "posting", "done"].includes(job.status) && job.audio && Object.keys(job.audio).length > 0 &&
         <AudioGate job={job} vlangs={vlangs} busy={busy} onApprove={runVideos} onFixVoice={runAudios} onFixWording={generateScript} />}
       {["video_review", "posting", "done"].includes(job.status) && job.video && Object.keys(job.video).length > 0 &&
@@ -725,12 +749,13 @@ function CorrectBox({ buttons }) {
   </div>;
 }
 
-function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
+function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect, onPostImage, imgBusy, imgMsg }) {
   const p = job.package;
   const done = job.status !== "script_review" && job.status !== "error";
   function setPath(path, val) { const next = JSON.parse(JSON.stringify(p)); let o = next; for (let i = 0; i < path.length - 1; i++) { o[path[i]] = o[path[i]] || {}; o = o[path[i]]; } o[path[path.length - 1]] = val; onEdit(next); }
   const has = (id) => job.input.platforms.includes(id);
   const tlang = (ch) => (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).text;
+  const imageChans = (job.input.platforms || []).filter(c => c === "gmb" || c === "blog");
   return <GateShell icon="file-text" title="1 · Review the scripts & posts" done={done}>
     <div className="mb-4 p-3 rounded-lg" style={{ background: "#f7efe0", border: `1px solid ${C.line}` }}>
       <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>Strategy · one CTA</div>
@@ -763,6 +788,11 @@ function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect }) {
     {!done && <div className="flex flex-wrap items-center gap-3 mt-2">
       <button onClick={onApprove} disabled={busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg" style={{ background: C.teal, color: "#fff", fontWeight: 500, fontSize: 14.5 }}><Check size={16} /> Approve → make audio</button>
       <CorrectBox buttons={[{ label: "Rewrite", color: C.vermilion, action: onCorrect }]} />
+    </div>}
+    {imageChans.length > 0 && <div className="mt-3 pt-3" style={{ borderTop: `1px dashed ${C.line}` }}>
+      <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 7 }}>{imageChans.map(chLabel).join(" & ")} {imageChans.length > 1 ? "are" : "is"} image/text only — post {imageChans.length > 1 ? "them" : "it"} now without making a video:</div>
+      <button onClick={onPostImage} disabled={imgBusy} className="flex items-center gap-2 px-4 py-2 rounded-lg" style={{ background: imgBusy ? C.line : C.purple, color: "#fff", fontWeight: 500, fontSize: 13.5 }}><Ico n="send" size={14} /> {imgBusy ? "Posting…" : `Post ${imageChans.map(chLabel).join(" + ")} now (no video)`}</button>
+      {imgMsg && <div style={{ fontSize: 13, marginTop: 8, color: imgMsg.ok ? C.green : C.vermDk }}>{imgMsg.text}</div>}
     </div>}
   </GateShell>;
 }
