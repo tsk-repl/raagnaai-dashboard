@@ -170,7 +170,7 @@ const clientsApi = {
 // Brand settings that sync across devices. Backend URL and simulate are deliberately NOT
 // synced — they stay device-local so a bad value (or a teammate's test toggle) can't knock
 // every device offline at once.
-const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType", "gmbLocationId", "linkedinPageId"];
+const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType", "gmbLocationId", "linkedinPageId", "facebookPageId"];
 function syncedSettings(settings) { const o = {}; SYNCED_SETTING_KEYS.forEach(k => { if (settings[k] !== undefined) o[k] = settings[k]; }); return o; }
 const settingsApi = {
   base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
@@ -226,7 +226,7 @@ async function backendCall(settings, path, body) {
 // ============================================================
 function App() {
   const [jobs, setJobs] = useState([]);
-  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "" });
+  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "", facebookPageId: "" });
   const [view, setView] = useState("list");
   const [activeId, setActiveId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -238,7 +238,7 @@ function App() {
   const hydrated = useRef(false);   // becomes true after a client's real settings finish loading; guards auto-save from overwriting with empties
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
-  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "" };
+  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "", facebookPageId: "" };
   const jobsKey = (id) => `raagnaai:jobs:${id}`;
   const brandKey = (id) => `raagnaai:brand:${id}`;
 
@@ -520,7 +520,7 @@ function buildPostItems(job, vlangs, channels, settings) {
     const want = (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).video;
     const vlang = vlangs.includes(want) ? want : vlangs[0];
     const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
-    if (ch === "facebook") item.text = p.captions?.facebook?.text;
+    if (ch === "facebook") { item.text = p.captions?.facebook?.text; item.facebookPageId = settings?.facebookPageId || ""; }
     else if (ch === "instagram") item.text = p.captions?.instagram?.text;
     else if (ch === "linkedin") { item.text = p.captions?.linkedin?.text; item.linkedinPageId = settings?.linkedinPageId || ""; }
     else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; }
@@ -899,6 +899,26 @@ function SettingsModal({ settings, setSettings, onClose }) {
     setLocBusy(false);
   }
   function save() { setSettings(s); onClose(); }
+  const [fbPages, setFbPages] = useState(null);
+  const [fbBusy, setFbBusy] = useState(false);
+  const [fbErr, setFbErr] = useState(null);
+  async function findFacebookPages() {
+    setFbBusy(true); setFbErr(null); setFbPages(null);
+    try {
+      const base = (s.backendUrl || DEFAULT_BACKEND).replace(/\/$/, "");
+      const r = await fetch(`${base}/facebook-pages?owner=${activeOwner}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const arr = Array.isArray(data) ? data : (data.pages || data.results || data.data || []);
+      const norm = (arr || []).map(x => ({
+        id: String(x.page_id || x.id || ""),
+        name: x.name || x.page_name || "(unnamed page)",
+      })).filter(p => p.id);
+      if (!norm.length) setFbErr("No pages returned. Raw: " + JSON.stringify(data).slice(0, 300));
+      setFbPages(norm);
+    } catch (e) { setFbErr(e.message); }
+    setFbBusy(false);
+  }
   const [liPages, setLiPages] = useState(null);
   const [liBusy, setLiBusy] = useState(false);
   const [liErr, setLiErr] = useState(null);
@@ -963,6 +983,19 @@ function SettingsModal({ settings, setSettings, onClose }) {
             </button>)}
           </div>}
           <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Your connected LinkedIn account must be an admin of the page.</div></div>
+        <div><label style={lbl}>Facebook page</label><input style={inp} placeholder="page ID (leave blank to auto-use your only Page)" value={s.facebookPageId || ""} onChange={e => setS({ ...s, facebookPageId: e.target.value.trim() })} />
+          <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+            <button type="button" onClick={findFacebookPages} disabled={fbBusy} className="px-3 py-1.5 rounded-lg" style={{ fontSize: 12.5, border: `1px solid ${C.line}`, background: C.paper, color: C.ink }}>{fbBusy ? "Finding…" : "Find my Facebook pages"}</button>
+            <span style={{ fontSize: 11, color: C.sub }}>Which Page to post to. Leave blank if you only have one.</span>
+          </div>
+          {fbErr && <div style={{ fontSize: 12, color: C.vermDk, marginTop: 6 }}>{fbErr}</div>}
+          {fbPages && fbPages.length > 0 && <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            {fbPages.map((pg, i) => <button type="button" key={i} onClick={() => setS({ ...s, facebookPageId: pg.id })} className="text-left px-3 py-2 rounded-lg" style={{ border: `1px solid ${s.facebookPageId === pg.id ? C.vermilion : C.line}`, background: s.facebookPageId === pg.id ? "#f7e4dd" : C.paper }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500, color: C.ink }}>{s.facebookPageId === pg.id ? "✓ " : ""}{pg.name}</div>
+              <div style={{ fontSize: 10.5, color: C.sub, fontFamily: FONT_MONO }}>{pg.id}</div>
+            </button>)}
+          </div>}
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Facebook only posts to Pages (not personal profiles).</div></div>
         <div><label style={lbl}>End-card logo (PNG works best)</label>
           <input type="file" accept="image/*" style={{ fontSize: 13 }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const cv = document.createElement("canvas"); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext("2d").drawImage(im, 0, 0); const png = cv.toDataURL("image/png"); setS(prev => ({ ...prev, logoDataUrl: png, logoBase64: png.split(",")[1], logoMediaType: "image/png" })); }; im.src = rd.result; }; rd.readAsDataURL(f); }} />
           {s.logoDataUrl && <img src={s.logoDataUrl} alt="" style={{ maxHeight: 70, marginTop: 8, background: "#eee", padding: 6, borderRadius: 8 }} />}</div>
