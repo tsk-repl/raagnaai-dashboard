@@ -170,7 +170,7 @@ const clientsApi = {
 // Brand settings that sync across devices. Backend URL and simulate are deliberately NOT
 // synced — they stay device-local so a bad value (or a teammate's test toggle) can't knock
 // every device offline at once.
-const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType", "gmbLocationId"];
+const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType", "gmbLocationId", "linkedinPageId"];
 function syncedSettings(settings) { const o = {}; SYNCED_SETTING_KEYS.forEach(k => { if (settings[k] !== undefined) o[k] = settings[k]; }); return o; }
 const settingsApi = {
   base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
@@ -226,7 +226,7 @@ async function backendCall(settings, path, body) {
 // ============================================================
 function App() {
   const [jobs, setJobs] = useState([]);
-  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "" });
+  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "" });
   const [view, setView] = useState("list");
   const [activeId, setActiveId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -238,7 +238,7 @@ function App() {
   const hydrated = useRef(false);   // becomes true after a client's real settings finish loading; guards auto-save from overwriting with empties
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
-  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "" };
+  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "", linkedinPageId: "" };
   const jobsKey = (id) => `raagnaai:jobs:${id}`;
   const brandKey = (id) => `raagnaai:brand:${id}`;
 
@@ -522,7 +522,7 @@ function buildPostItems(job, vlangs, channels, settings) {
     const item = { channel: ch, videoUrl: job.video?.[vlang]?.url, imageUrl: job.video?.[vlang]?.imageUrl };
     if (ch === "facebook") item.text = p.captions?.facebook?.text;
     else if (ch === "instagram") item.text = p.captions?.instagram?.text;
-    else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
+    else if (ch === "linkedin") { item.text = p.captions?.linkedin?.text; item.linkedinPageId = settings?.linkedinPageId || ""; }
     else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; }
     else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
     else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; }
@@ -899,6 +899,27 @@ function SettingsModal({ settings, setSettings, onClose }) {
     setLocBusy(false);
   }
   function save() { setSettings(s); onClose(); }
+  const [liPages, setLiPages] = useState(null);
+  const [liBusy, setLiBusy] = useState(false);
+  const [liErr, setLiErr] = useState(null);
+  async function findLinkedinPages() {
+    setLiBusy(true); setLiErr(null); setLiPages(null);
+    try {
+      const base = (s.backendUrl || DEFAULT_BACKEND).replace(/\/$/, "");
+      const r = await fetch(`${base}/linkedin-pages?owner=${activeOwner}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const arr = Array.isArray(data) ? data : (data.pages || data.results || data.data || []);
+      const norm = (arr || []).map(x => ({
+        id: String(x.id || x.organization_id || x.urn || "").replace(/^urn:li:organization:/, ""),
+        name: x.name || x.localizedName || x.vanityName || "(unnamed page)",
+        vanity: x.vanityName || "",
+      })).filter(p => p.id);
+      if (!norm.length) setLiErr("No company pages returned. Raw: " + JSON.stringify(data).slice(0, 300));
+      setLiPages(norm);
+    } catch (e) { setLiErr(e.message); }
+    setLiBusy(false);
+  }
   const lbl = { fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
   const inp = { background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, width: "100%", color: C.ink };
   return <div className="fixed inset-0 flex items-start justify-center p-4 overflow-auto" style={{ background: "rgba(34,31,26,.45)", zIndex: 50 }}>
@@ -928,6 +949,20 @@ function SettingsModal({ settings, setSettings, onClose }) {
             </button>)}
           </div>}
           <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Which Google Business location to post to. Leave blank if you only have one.</div></div>
+        <div><label style={lbl}>LinkedIn company page</label><input style={inp} placeholder="company page ID (leave blank to post to personal profile)" value={s.linkedinPageId || ""} onChange={e => setS({ ...s, linkedinPageId: e.target.value.trim().replace(/^urn:li:organization:/, "") })} />
+          <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+            <button type="button" onClick={findLinkedinPages} disabled={liBusy} className="px-3 py-1.5 rounded-lg" style={{ fontSize: 12.5, border: `1px solid ${C.line}`, background: C.paper, color: C.ink }}>{liBusy ? "Finding…" : "Find my LinkedIn pages"}</button>
+            <span style={{ fontSize: 11, color: C.sub }}>Posts to your company page instead of your personal profile.</span>
+          </div>
+          {liErr && <div style={{ fontSize: 12, color: C.vermDk, marginTop: 6 }}>{liErr}</div>}
+          {liPages && liPages.length > 0 && <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            <button type="button" onClick={() => setS({ ...s, linkedinPageId: "" })} className="text-left px-3 py-2 rounded-lg" style={{ border: `1px solid ${!s.linkedinPageId ? C.vermilion : C.line}`, background: !s.linkedinPageId ? "#f7e4dd" : C.paper, fontSize: 13.5, color: C.ink }}>{!s.linkedinPageId ? "✓ " : ""}Personal profile (no company page)</button>
+            {liPages.map((pg, i) => <button type="button" key={i} onClick={() => setS({ ...s, linkedinPageId: pg.id })} className="text-left px-3 py-2 rounded-lg" style={{ border: `1px solid ${s.linkedinPageId === pg.id ? C.vermilion : C.line}`, background: s.linkedinPageId === pg.id ? "#f7e4dd" : C.paper }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500, color: C.ink }}>{s.linkedinPageId === pg.id ? "✓ " : ""}{pg.name}</div>
+              <div style={{ fontSize: 10.5, color: C.sub, fontFamily: FONT_MONO }}>{pg.id}{pg.vanity ? " · /" + pg.vanity : ""}</div>
+            </button>)}
+          </div>}
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Your connected LinkedIn account must be an admin of the page.</div></div>
         <div><label style={lbl}>End-card logo (PNG works best)</label>
           <input type="file" accept="image/*" style={{ fontSize: 13 }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const cv = document.createElement("canvas"); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext("2d").drawImage(im, 0, 0); const png = cv.toDataURL("image/png"); setS(prev => ({ ...prev, logoDataUrl: png, logoBase64: png.split(",")[1], logoMediaType: "image/png" })); }; im.src = rd.result; }; rd.readAsDataURL(f); }} />
           {s.logoDataUrl && <img src={s.logoDataUrl} alt="" style={{ maxHeight: 70, marginTop: 8, background: "#eee", padding: 6, borderRadius: 8 }} />}</div>
