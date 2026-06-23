@@ -170,7 +170,7 @@ const clientsApi = {
 // Brand settings that sync across devices. Backend URL and simulate are deliberately NOT
 // synced — they stay device-local so a bad value (or a teammate's test toggle) can't knock
 // every device offline at once.
-const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType"];
+const SYNCED_SETTING_KEYS = ["voiceId", "dna", "logoDataUrl", "logoBase64", "logoMediaType", "gmbLocationId"];
 function syncedSettings(settings) { const o = {}; SYNCED_SETTING_KEYS.forEach(k => { if (settings[k] !== undefined) o[k] = settings[k]; }); return o; }
 const settingsApi = {
   base(settings) { return (settings.backendUrl || DEFAULT_BACKEND).replace(/\/$/, ""); },
@@ -226,7 +226,7 @@ async function backendCall(settings, path, body) {
 // ============================================================
 function App() {
   const [jobs, setJobs] = useState([]);
-  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "" });
+  const [settings, setSettings] = useState({ backendUrl: DEFAULT_BACKEND, voiceId: "", simulate: true, dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "" });
   const [view, setView] = useState("list");
   const [activeId, setActiveId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -238,7 +238,7 @@ function App() {
   const hydrated = useRef(false);   // becomes true after a client's real settings finish loading; guards auto-save from overwriting with empties
   function syncSave(job) { try { postsApi.save(settings, job).catch(() => {}); } catch (_) {} }
 
-  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "" };
+  const BRAND_DEFAULTS = { voiceId: "", dna: DEFAULT_DNA, logoDataUrl: "", logoBase64: "", logoMediaType: "", gmbLocationId: "" };
   const jobsKey = (id) => `raagnaai:jobs:${id}`;
   const brandKey = (id) => `raagnaai:brand:${id}`;
 
@@ -514,7 +514,7 @@ function NewJob({ onCancel, onCreated }) {
 
 // Builds the per-channel items sent to Make — reused by first-time posting AND re-posting.
 // Uses the already-hosted video/image URLs, so re-posting never re-renders (no cost).
-function buildPostItems(job, vlangs, channels) {
+function buildPostItems(job, vlangs, channels, settings) {
   const p = job.package || {};
   return channels.map(ch => {
     const want = (job.input.chanLang && job.input.chanLang[ch]) || (POLICY[ch] || {}).video;
@@ -523,7 +523,7 @@ function buildPostItems(job, vlangs, channels) {
     if (ch === "facebook") item.text = p.captions?.facebook?.text;
     else if (ch === "instagram") item.text = p.captions?.instagram?.text;
     else if (ch === "linkedin") item.text = p.captions?.linkedin?.text;
-    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; }
+    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; }
     else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
     else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; }
     return item;
@@ -546,7 +546,7 @@ function RepostPanel({ job, settings, patch }) {
     if (!chosen.length) return;
     setBusy(true); setMsg(null); setConfirming(false);
     try {
-      const items = buildPostItems(job, vlangs, chosen);
+      const items = buildPostItems(job, vlangs, chosen, settings);
       const resp = await backendCall(settings, "post", { items, owner: activeOwner });
       const okChans = (resp && resp.posted) || chosen;
       const results = (resp && resp.results) || null;
@@ -645,7 +645,7 @@ function JobDetail({ job, settings, patch, onBack }) {
   async function doPost() {
     setBusy(true); setErr(null); patch({ status: "posting" });
     try {
-      const items = buildPostItems(job, vlangs, job.input.platforms);
+      const items = buildPostItems(job, vlangs, job.input.platforms, settings);
       const resp = await backendCall(settings, "post", { items, owner: activeOwner });
       patch({ posted: (resp && resp.posted) || job.input.platforms, status: "done", lastResults: (resp && resp.results) || null });
     } catch (e) {
@@ -661,7 +661,7 @@ function JobDetail({ job, settings, patch, onBack }) {
     if (!chans.length) return;
     setImgBusy(true); setImgMsg(null);
     try {
-      const items = buildPostItems(job, vlangs, chans);
+      const items = buildPostItems(job, vlangs, chans, settings);
       const resp = await backendCall(settings, "post", { items, owner: activeOwner });
       const ok = (resp && resp.posted) || chans;
       patch(j => ({ posted: Array.from(new Set([...(j.posted || []), ...ok])), lastResults: (resp && resp.results) || j.lastResults, history: [...(j.history || []), { at: Date.now(), action: "post-image", channels: chans }] }));
@@ -876,6 +876,28 @@ function PostedCard({ job }) {
 
 function SettingsModal({ settings, setSettings, onClose }) {
   const [s, setS] = useState(settings);
+  const [locs, setLocs] = useState(null);     // fetched GMB locations
+  const [locBusy, setLocBusy] = useState(false);
+  const [locErr, setLocErr] = useState(null);
+  async function findLocations() {
+    setLocBusy(true); setLocErr(null); setLocs(null);
+    try {
+      const base = (s.backendUrl || DEFAULT_BACKEND).replace(/\/$/, "");
+      const r = await fetch(`${base}/gmb-locations?owner=${activeOwner}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      // be flexible about the response shape
+      const arr = Array.isArray(data) ? data : (data.locations || data.results || data.data || []);
+      const norm = (arr || []).map(x => ({
+        id: x.location_id || x.id || x.name || x.location || "",
+        name: x.business_name || x.title || x.name || x.location_name || x.id || "(unnamed)",
+        address: x.address || x.storefront_address || "",
+      })).filter(l => l.id);
+      if (!norm.length) { setLocErr("No locations returned. Raw: " + JSON.stringify(data).slice(0, 300)); }
+      setLocs(norm);
+    } catch (e) { setLocErr(e.message); }
+    setLocBusy(false);
+  }
   function save() { setSettings(s); onClose(); }
   const lbl = { fontSize: 12.5, fontWeight: 500, color: C.sub, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5, display: "block" };
   const inp = { background: C.paper, border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, width: "100%", color: C.ink };
@@ -892,6 +914,20 @@ function SettingsModal({ settings, setSettings, onClose }) {
         </label>
         <div><label style={lbl}>Backend URL</label><input style={inp} value={s.backendUrl} onChange={e => setS({ ...s, backendUrl: e.target.value })} /></div>
         <div><label style={lbl}>ElevenLabs cloned voice ID</label><input style={inp} placeholder="paste your voice ID" value={s.voiceId} onChange={e => setS({ ...s, voiceId: e.target.value })} /></div>
+        <div><label style={lbl}>Google Business location ID</label><input style={inp} placeholder="needed if your GMB account has multiple locations" value={s.gmbLocationId || ""} onChange={e => setS({ ...s, gmbLocationId: e.target.value.trim() })} />
+          <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+            <button type="button" onClick={findLocations} disabled={locBusy} className="px-3 py-1.5 rounded-lg" style={{ fontSize: 12.5, border: `1px solid ${C.line}`, background: C.paper, color: C.ink }}>{locBusy ? "Finding…" : "Find my locations"}</button>
+            <span style={{ fontSize: 11, color: C.sub }}>Asks Google Business which locations you have, then pick one.</span>
+          </div>
+          {locErr && <div style={{ fontSize: 12, color: C.vermDk, marginTop: 6 }}>{locErr}</div>}
+          {locs && locs.length > 0 && <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            {locs.map((l, i) => <button type="button" key={i} onClick={() => setS({ ...s, gmbLocationId: l.id })} className="text-left px-3 py-2 rounded-lg" style={{ border: `1px solid ${s.gmbLocationId === l.id ? C.vermilion : C.line}`, background: s.gmbLocationId === l.id ? "#f7e4dd" : C.paper }}>
+              <div style={{ fontSize: 13.5, fontWeight: 500, color: C.ink }}>{s.gmbLocationId === l.id ? "✓ " : ""}{l.name}</div>
+              {l.address && <div style={{ fontSize: 11.5, color: C.sub }}>{l.address}</div>}
+              <div style={{ fontSize: 10.5, color: C.sub, fontFamily: FONT_MONO }}>{l.id}</div>
+            </button>)}
+          </div>}
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>Which Google Business location to post to. Leave blank if you only have one.</div></div>
         <div><label style={lbl}>End-card logo (PNG works best)</label>
           <input type="file" accept="image/*" style={{ fontSize: 13 }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const cv = document.createElement("canvas"); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext("2d").drawImage(im, 0, 0); const png = cv.toDataURL("image/png"); setS(prev => ({ ...prev, logoDataUrl: png, logoBase64: png.split(",")[1], logoMediaType: "image/png" })); }; im.src = rd.result; }; rd.readAsDataURL(f); }} />
           {s.logoDataUrl && <img src={s.logoDataUrl} alt="" style={{ maxHeight: 70, marginTop: 8, background: "#eee", padding: 6, borderRadius: 8 }} />}</div>
