@@ -525,7 +525,7 @@ function buildPostItems(job, vlangs, channels, settings) {
     else if (ch === "linkedin") { item.text = p.captions?.linkedin?.text; item.linkedinPageId = settings?.linkedinPageId || ""; }
     else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; item.altText = p.image_alt_text || ""; }
     else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
-    else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; }
+    else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.altText = p.image_alt_text || ""; }
     return item;
   });
 }
