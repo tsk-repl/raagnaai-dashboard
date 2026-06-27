@@ -523,7 +523,7 @@ function buildPostItems(job, vlangs, channels, settings) {
     if (ch === "facebook") { item.text = p.captions?.facebook?.text; item.facebookPageId = settings?.facebookPageId || ""; }
     else if (ch === "instagram") item.text = p.captions?.instagram?.text;
     else if (ch === "linkedin") { item.text = p.captions?.linkedin?.text; item.linkedinPageId = settings?.linkedinPageId || ""; }
-    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; }
+    else if (ch === "gmb") { item.text = p.gmb_post?.text; item.cta = p.gmb_post?.cta_button_type; item.imageData = job.input?.imageBase64; item.imageMediaType = job.input?.imageMediaType; item.gmbLocationId = settings?.gmbLocationId || ""; item.altText = p.image_alt_text || ""; }
     else if (ch === "youtube") { item.title = p.youtube?.title; item.description = p.youtube?.description; }
     else if (ch === "blog") { item.title = p.blog?.title; item.html = p.blog?.body_html; item.focusKeyword = p.blog?.focus_keyword; item.metaDescription = p.blog?.meta_description; item.seoTitle = p.blog?.seo_title; }
     return item;
@@ -777,6 +777,7 @@ function ScriptGate({ job, vlangs, busy, onEdit, onApprove, onCorrect, onPostIma
     {has("linkedin") && <Collapsible label={`LinkedIn post (${LANG_LABEL[tlang("linkedin")]})`}><Field hideLabel value={p.captions?.linkedin?.text} onChange={v => setPath(["captions", "linkedin", "text"], v)} /></Collapsible>}
     {has("youtube") && <Collapsible label={`YouTube title + description (${LANG_LABEL[tlang("youtube")]})`}><Field hideLabel rows={3} value={`${p.youtube?.title || ""}\n${p.youtube?.description || ""}`} onChange={v => { const [t, ...d] = v.split("\n"); setPath(["youtube", "title"], t); setPath(["youtube", "description"], d.join("\n")); }} /></Collapsible>}
     {has("gmb") && <Collapsible label={`Google Business post (${LANG_LABEL[tlang("gmb")]})`}><Field hideLabel value={p.gmb_post?.text} onChange={v => setPath(["gmb_post", "text"], v)} /></Collapsible>}
+    {p.image_alt_text !== undefined && <Collapsible label="Photo Alt Text (SEO — used for GMB photo title &amp; blog image)"><Field hideLabel value={p.image_alt_text} onChange={v => setPath(["image_alt_text"], v)} /></Collapsible>}
     {has("blog") && <Collapsible label={`Blog (${LANG_LABEL[tlang("blog")]}, HTML)`}>
       <Field hideLabel label="Focus keyword" value={p.blog?.focus_keyword} onChange={v => setPath(["blog", "focus_keyword"], v)} />
       <div style={{ fontSize: 11, color: C.sub, margin: "2px 0 8px" }}>SEO focus keyword ↑ · meta description ↓ · then the post body</div>
